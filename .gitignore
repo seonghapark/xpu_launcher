@@ -1,0 +1,5 @@
+# Unit test
+.*_cache
+__pycache__/
+tests/
+outputs/

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "xpu-launch"
+version = "0.1.0"
+description = "Standalone xpu launcher and Python library"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "click",
+]
+
+[project.scripts]
+xpu = "xpu_launch.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cli", "src/xpu_launch"]
