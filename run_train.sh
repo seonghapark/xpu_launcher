@@ -102,10 +102,13 @@ if command -v "$XPU_CMD" >/dev/null 2>&1; then
   XPU_INVOKE=("$XPU_CMD")
 elif [[ -x "./.venv/bin/xpu" ]]; then
   XPU_INVOKE=("./.venv/bin/xpu")
+elif command -v "$PYTHON_BIN" >/dev/null 2>&1 && [[ -d "$(pwd)/src/cli" ]]; then
+  export PYTHONPATH="$(pwd)/src${PYTHONPATH:+:$PYTHONPATH}"
+  XPU_INVOKE=("$PYTHON_BIN" "-m" "cli")
 elif [[ -x "../torchtitan/.venv/bin/xpu" ]]; then
   XPU_INVOKE=("../torchtitan/.venv/bin/xpu")
 elif command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-  export PYTHONPATH="${PYTHONPATH:-}:$(pwd)/src"
+  export PYTHONPATH="$(pwd)/src${PYTHONPATH:+:$PYTHONPATH}"
   XPU_INVOKE=("$PYTHON_BIN" "-m" "cli")
 else
   echo "error: cannot find xpu launcher (PATH, ./.venv/bin/xpu, ../torchtitan/.venv/bin/xpu)" >&2
