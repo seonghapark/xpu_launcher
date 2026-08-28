@@ -1,0 +1,57 @@
+hostname=x4310c4s0b0n0
+PBS_JOBID=8787369.aurora-pbs-0001.hostmgmt.cm.aurora.alcf.anl.gov
+run_name=gemma-bsz1-steps1265000-x4310c4s0b0n0-20260827_211559
+log_dir=/lus/flare/projects/datascience/seonghapark/llm_evaluation/xpu_launcher/outputs/gemma_bsz1_steps1265000_x4310c4s0b0n0_20260827_211559
+Runtime env summary:
+  PYTHON_BIN=/lus/flare/projects/datascience/seonghapark/llm_evaluation/venv/bin/python
+  MODEL_PATH=/lus/flare/projects/datascience/seonghapark/torchtitan/assets/hf/gemma-7b
+  DATASET_PATH=pg19,multi_news DATASET_SPLIT=train DATASET_STREAMING=1
+  DATASET_CACHE_DIR=/lus/flare/projects/datascience/seonghapark/llm_evaluation/evaluation/datasets/hf_cache
+  VALIDATION_DATASET_PATH=pg19,multi_news VALIDATION_DATASET_SPLIT=validation VALIDATION_EVERY=1 DISABLE_VALIDATION=0
+  WANDB_PROJECT=xpu-non-torchtitan-gemma WANDB_MODE=online DISABLE_WANDB=0
+  LOG_DIR=/lus/flare/projects/datascience/seonghapark/llm_evaluation/xpu_launcher/outputs/gemma_bsz1_steps1265000_x4310c4s0b0n0_20260827_211559
+  SAVE_AFTER_MINUTES=45 CHECKPOINT_DIR=/lus/flare/projects/datascience/seonghapark/llm_evaluation/xpu_launcher/outputs/gemma_bsz1_steps1265000_x4310c4s0b0n0_20260827_211559/checkpoints DISABLE_TIME_CHECKPOINT=0
+  SCHEDULER=auto NPROC_PER_NODE=1 AUTO_RETRY=0
+  LOAD_FRAMEWORKS=1 CCL_PROCESS_LAUNCHER=hydra
+  ZE_FLAT_DEVICE_HIERARCHY=COMPOSITE CCL_ATL_TRANSPORT=ofi FI_PROVIDER=cxi,tcp;ofi_rxm
+  PYTHONMULTIPROCESSINGMETHOD=spawn VLLM_WORKER_MULTIPROC_METHOD=spawn
+Running: /lus/flare/projects/datascience/seonghapark/llm_evaluation/xpu_launcher/run_train_non_torchtitan.sh single -- --steps 1265000 --seq-len 16384 --batch-size 1 --train-mode lm_head --dtype bfloat16 --device xpu --lr 1e-5 --dataset-split train --dataset-cache-dir /lus/flare/projects/datascience/seonghapark/llm_evaluation/evaluation/datasets/hf_cache --dataset-max-samples 64 --validation-dataset-path pg19\,multi_news --validation-dataset-split validation --validation-every 1 --wandb-project xpu-non-torchtitan-gemma --wandb-mode online --save-after-minutes 45 --checkpoint-dir /lus/flare/projects/datascience/seonghapark/llm_evaluation/xpu_launcher/outputs/gemma_bsz1_steps1265000_x4310c4s0b0n0_20260827_211559/checkpoints --dataset-streaming 
+Running: /lus/flare/projects/datascience/seonghapark/llm_evaluation/xpu_launcher/run_train.sh single -- /lus/flare/projects/datascience/seonghapark/llm_evaluation/venv/bin/python /lus/flare/projects/datascience/seonghapark/llm_evaluation/xpu_launcher/non_torchtitan_gemma_train.py --model-path /lus/flare/projects/datascience/seonghapark/torchtitan/assets/hf/gemma-7b --dataset-path pg19\,multi_news --log-dir /lus/flare/projects/datascience/seonghapark/llm_evaluation/xpu_launcher/outputs/gemma_bsz1_steps1265000_x4310c4s0b0n0_20260827_211559 --steps 1265000 --seq-len 16384 --batch-size 1 --train-mode lm_head --dtype bfloat16 --device xpu --lr 1e-5 --dataset-split train --dataset-cache-dir /lus/flare/projects/datascience/seonghapark/llm_evaluation/evaluation/datasets/hf_cache --dataset-max-samples 64 --validation-dataset-path pg19\,multi_news --validation-dataset-split validation --validation-every 1 --wandb-project xpu-non-torchtitan-gemma --wandb-mode online --save-after-minutes 45 --checkpoint-dir /lus/flare/projects/datascience/seonghapark/llm_evaluation/xpu_launcher/outputs/gemma_bsz1_steps1265000_x4310c4s0b0n0_20260827_211559/checkpoints --dataset-streaming 
+Running: /lus/flare/projects/datascience/seonghapark/llm_evaluation/venv/bin/python -m cli launch --scheduler auto -n 1 -ppn 1 -- /lus/flare/projects/datascience/seonghapark/llm_evaluation/venv/bin/python /lus/flare/projects/datascience/seonghapark/llm_evaluation/xpu_launcher/non_torchtitan_gemma_train.py --model-path /lus/flare/projects/datascience/seonghapark/torchtitan/assets/hf/gemma-7b --dataset-path pg19\,multi_news --log-dir /lus/flare/projects/datascience/seonghapark/llm_evaluation/xpu_launcher/outputs/gemma_bsz1_steps1265000_x4310c4s0b0n0_20260827_211559 --steps 1265000 --seq-len 16384 --batch-size 1 --train-mode lm_head --dtype bfloat16 --device xpu --lr 1e-5 --dataset-split train --dataset-cache-dir /lus/flare/projects/datascience/seonghapark/llm_evaluation/evaluation/datasets/hf_cache --dataset-max-samples 64 --validation-dataset-path pg19\,multi_news --validation-dataset-split validation --validation-every 1 --wandb-project xpu-non-torchtitan-gemma --wandb-mode online --save-after-minutes 45 --checkpoint-dir /lus/flare/projects/datascience/seonghapark/llm_evaluation/xpu_launcher/outputs/gemma_bsz1_steps1265000_x4310c4s0b0n0_20260827_211559/checkpoints --dataset-streaming 
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:00<00:01,  1.95it/s]Loading checkpoint shards:  50%|█████     | 2/4 [00:01<00:01,  1.76it/s]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:01<00:00,  1.57it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:02<00:00,  1.62it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:02<00:00,  1.65it/s]
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /home/seonghapark/.netrc.
+wandb: Currently logged in as: classicblue to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run qud1rkis
+wandb: Tracking run with wandb version 0.24.2
+wandb: Run data is saved locally in /lus/flare/projects/datascience/seonghapark/llm_evaluation/xpu_launcher/outputs/gemma_bsz1_steps1265000_x4310c4s0b0n0_20260827_211559/wandb/run-20260827_211840-qud1rkis
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run gemma-bsz1-steps1265000-x4310c4s0b0n0-20260827_211559
+wandb: ⭐️ View project at https://wandb.ai/classicblue/xpu-non-torchtitan-gemma
+wandb: 🚀 View run at https://wandb.ai/classicblue/xpu-non-torchtitan-gemma/runs/qud1rkis
+Traceback (most recent call last):
+  File "/lus/flare/projects/datascience/seonghapark/llm_evaluation/xpu_launcher/non_torchtitan_gemma_train.py", line 572, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/lus/flare/projects/datascience/seonghapark/llm_evaluation/xpu_launcher/non_torchtitan_gemma_train.py", line 477, in main
+    outputs = model(input_ids=input_ids, labels=input_ids)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/aurora/26.26.0/frameworks/aurora_frameworks-2025.3.1/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1776, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/aurora/26.26.0/frameworks/aurora_frameworks-2025.3.1/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1787, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/aurora/26.26.0/frameworks/aurora_frameworks-2025.3.1/lib/python3.12/site-packages/transformers/utils/generic.py", line 918, in wrapper
+    output = func(self, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/aurora/26.26.0/frameworks/aurora_frameworks-2025.3.1/lib/python3.12/site-packages/transformers/models/gemma/modeling_gemma.py", line 486, in forward
+    loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/aurora/26.26.0/frameworks/aurora_frameworks-2025.3.1/lib/python3.12/site-packages/transformers/loss/loss_utils.py", line 55, in ForCausalLMLoss
+    logits = logits.float()
+             ^^^^^^^^^^^^^^
+RuntimeError: level_zero backend failed with error: 40 (UR_RESULT_ERROR_OUT_OF_RESOURCES)
+[1;34mwandb[0m: 
+[1;34mwandb[0m: 🚀 View run [33mgemma-bsz1-steps1265000-x4310c4s0b0n0-20260827_211559[0m at: [34mhttps://wandb.ai/classicblue/xpu-non-torchtitan-gemma/runs/qud1rkis[0m
+[1;34mwandb[0m: Find logs at: [1;35moutputs/gemma_bsz1_steps1265000_x4310c4s0b0n0_20260827_211559/wandb/run-20260827_211840-qud1rkis/logs[0m
+x4310c4s0b0n0.hsn.cm.aurora.alcf.anl.gov: rank 0 exited with code 1

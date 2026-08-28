@@ -67,6 +67,18 @@ def parse_args() -> argparse.Namespace:
         help="Input sequence length in tokens, or 'max' to use the model maximum.",
     )
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument(
+        "--micro-batch-size",
+        type=int,
+        default=1,
+        help="Micro-batch size used for lm_head training to reduce activation memory.",
+    )
+    parser.add_argument(
+        "--logit-chunk-size",
+        type=int,
+        default=512,
+        help="Sequence chunk size used for lm_head logits/loss computation.",
+    )
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--device", default="xpu", choices=("xpu", "cpu"))
     parser.add_argument("--dtype", default="bfloat16", choices=("auto", "bfloat16", "float16", "float32"))
@@ -373,6 +385,107 @@ def evaluate_batch(model: Any, input_ids: Any, torch: Any) -> tuple[float, float
     return loss, accuracy
 
 
+def lm_head_chunk_loss_and_accuracy(
+    model: Any,
+    hidden_states: Any,
+    labels: Any,
+    torch: Any,
+    *,
+    logit_chunk_size: int,
+    total_loss_tokens: int | None = None,
+    backward: bool = False,
+) -> tuple[float, float]:
+    import torch.nn.functional as F
+
+    if labels.shape[-1] < 2:
+        return 0.0, 0.0
+    chunk_size = max(1, logit_chunk_size)
+    total_targets = labels[:, 1:].numel()
+    loss_denominator = total_loss_tokens or total_targets
+    loss_sum = 0.0
+    correct = 0
+    seen = 0
+    for start in range(0, labels.shape[-1] - 1, chunk_size):
+        end = min(labels.shape[-1] - 1, start + chunk_size)
+        logits = model.lm_head(hidden_states[:, start:end, :])
+        targets = labels[:, start + 1 : end + 1]
+        chunk_loss_sum = F.cross_entropy(
+            logits.reshape(-1, logits.shape[-1]),
+            targets.reshape(-1),
+            reduction="sum",
+        )
+        if backward:
+            (chunk_loss_sum / loss_denominator).backward()
+        loss_sum += float(chunk_loss_sum.detach().cpu())
+        predictions = logits.argmax(dim=-1)
+        correct += int((predictions == targets).sum().detach().cpu())
+        seen += targets.numel()
+        del logits, targets, chunk_loss_sum, predictions
+    return loss_sum / total_targets, (correct / seen if seen else 0.0)
+
+
+def forward_backbone_no_grad(model: Any, input_ids: Any, torch: Any) -> Any:
+    with torch.no_grad():
+        outputs = model.model(input_ids=input_ids, use_cache=False)
+    return outputs.last_hidden_state
+
+
+def train_lm_head_step(model: Any, input_ids: Any, optimizer: Any, torch: Any, args: argparse.Namespace) -> tuple[float, float]:
+    optimizer.zero_grad(set_to_none=True)
+    total_tokens = input_ids[:, 1:].numel()
+    loss_weighted_sum = 0.0
+    accuracy_weighted_sum = 0.0
+    seen_tokens = 0
+    micro_batch_size = max(1, min(args.micro_batch_size, input_ids.shape[0]))
+    for start in range(0, input_ids.shape[0], micro_batch_size):
+        micro_input_ids = input_ids[start : start + micro_batch_size]
+        hidden_states = forward_backbone_no_grad(model, micro_input_ids, torch)
+        micro_loss, micro_accuracy = lm_head_chunk_loss_and_accuracy(
+            model,
+            hidden_states,
+            micro_input_ids,
+            torch,
+            logit_chunk_size=args.logit_chunk_size,
+            total_loss_tokens=total_tokens,
+            backward=True,
+        )
+        micro_tokens = micro_input_ids[:, 1:].numel()
+        loss_weighted_sum += micro_loss * micro_tokens
+        accuracy_weighted_sum += micro_accuracy * micro_tokens
+        seen_tokens += micro_tokens
+        del micro_input_ids, hidden_states
+    optimizer.step()
+    return loss_weighted_sum / seen_tokens, accuracy_weighted_sum / seen_tokens
+
+
+def evaluate_lm_head_batch(model: Any, input_ids: Any, torch: Any, args: argparse.Namespace) -> tuple[float, float]:
+    was_training = model.training
+    model.eval()
+    loss_weighted_sum = 0.0
+    accuracy_weighted_sum = 0.0
+    seen_tokens = 0
+    micro_batch_size = max(1, min(args.micro_batch_size, input_ids.shape[0]))
+    with torch.no_grad():
+        for start in range(0, input_ids.shape[0], micro_batch_size):
+            micro_input_ids = input_ids[start : start + micro_batch_size]
+            outputs = model.model(input_ids=micro_input_ids, use_cache=False)
+            micro_loss, micro_accuracy = lm_head_chunk_loss_and_accuracy(
+                model,
+                outputs.last_hidden_state,
+                micro_input_ids,
+                torch,
+                logit_chunk_size=args.logit_chunk_size,
+            )
+            micro_tokens = micro_input_ids[:, 1:].numel()
+            loss_weighted_sum += micro_loss * micro_tokens
+            accuracy_weighted_sum += micro_accuracy * micro_tokens
+            seen_tokens += micro_tokens
+            del micro_input_ids, outputs
+    if was_training:
+        model.train()
+    return loss_weighted_sum / seen_tokens, accuracy_weighted_sum / seen_tokens
+
+
 def prefix_keys(values: dict[str, Any], prefix: str) -> dict[str, Any]:
     return {f"{prefix}{key}": value for key, value in values.items()}
 
@@ -414,6 +527,10 @@ def main() -> int:
         low_cpu_mem_usage=True,
     )
     args.seq_len = resolve_seq_len(args.seq_len, model.config)
+    if args.micro_batch_size < 1:
+        raise ValueError("--micro-batch-size must be >= 1")
+    if args.logit_chunk_size < 1:
+        raise ValueError("--logit-chunk-size must be >= 1")
 
     if args.device == "xpu":
         if not hasattr(torch, "xpu") or not torch.xpu.is_available():
@@ -448,6 +565,8 @@ def main() -> int:
             "steps": args.steps,
             "seq_len": args.seq_len,
             "batch_size": args.batch_size,
+            "micro_batch_size": args.micro_batch_size,
+            "logit_chunk_size": args.logit_chunk_size,
             "lr": args.lr,
             "dataset_path": args.dataset_path,
             "dataset_split": args.dataset_split,
@@ -473,13 +592,16 @@ def main() -> int:
     time_checkpoint_step = None
     save_after_seconds = max(0.0, args.save_after_minutes * 60.0)
     for step in range(1, args.steps + 1):
-        optimizer.zero_grad(set_to_none=True)
-        outputs = model(input_ids=input_ids, labels=input_ids)
-        loss = outputs.loss
-        train_accuracy = causal_lm_accuracy(torch, outputs.logits, input_ids)
-        loss.backward()
-        optimizer.step()
-        train_loss = float(loss.detach().cpu())
+        if args.train_mode == "lm_head":
+            train_loss, train_accuracy = train_lm_head_step(model, input_ids, optimizer, torch, args)
+        else:
+            optimizer.zero_grad(set_to_none=True)
+            outputs = model(input_ids=input_ids, labels=input_ids)
+            loss = outputs.loss
+            train_accuracy = causal_lm_accuracy(torch, outputs.logits, input_ids)
+            loss.backward()
+            optimizer.step()
+            train_loss = float(loss.detach().cpu())
         losses.append(train_loss)
         accuracies.append(train_accuracy)
         elapsed_seconds = time.monotonic() - training_start_time
@@ -489,7 +611,10 @@ def main() -> int:
             "train/elapsed_seconds": elapsed_seconds,
         }
         if validation_input_ids is not None and step % max(1, args.validation_every) == 0:
-            validation_loss, validation_accuracy = evaluate_batch(model, validation_input_ids, torch)
+            if args.train_mode == "lm_head":
+                validation_loss, validation_accuracy = evaluate_lm_head_batch(model, validation_input_ids, torch, args)
+            else:
+                validation_loss, validation_accuracy = evaluate_batch(model, validation_input_ids, torch)
             validation_losses.append(validation_loss)
             validation_accuracies.append(validation_accuracy)
             metrics.update(
@@ -531,6 +656,8 @@ def main() -> int:
         "steps": args.steps,
         "seq_len": args.seq_len,
         "batch_size": args.batch_size,
+        "micro_batch_size": args.micro_batch_size,
+        "logit_chunk_size": args.logit_chunk_size,
         "dataset_path": args.dataset_path,
         "train_mode": args.train_mode,
         "trainable_params": trainable_params,
