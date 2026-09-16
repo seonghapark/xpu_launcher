@@ -1,4 +1,4 @@
-"""Postmortem-oriented failover data model aligned with ezpz semantics."""
+"""Postmortem-oriented failover data model for host swap bookkeeping."""
 
 from __future__ import annotations
 

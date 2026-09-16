@@ -11,7 +11,7 @@ import click
 @click.command("integrations")
 def integrations_cmd() -> None:
     checks = {}
-    for name in ("ezpz", "torch", "deepspeed", "horovod", "wandb", "mlflow"):
+    for name in ("torch", "deepspeed", "horovod", "wandb", "mlflow"):
         try:
             importlib.import_module(name)
             checks[name] = "available"

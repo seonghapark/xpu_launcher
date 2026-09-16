@@ -47,7 +47,7 @@ def detect_scheduler(explicit: Optional[str] = None) -> str:
     if explicit:
         return explicit.strip().lower()
 
-    env_override = os.environ.get("XPU_SCHEDULER") or os.environ.get("EZPZ_SCHEDULER")
+    env_override = os.environ.get("XPU_SCHEDULER")
     if env_override:
         return env_override.strip().lower()
 

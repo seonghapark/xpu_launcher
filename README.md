@@ -8,9 +8,9 @@ Small Python package + CLI that provides:
 - `xpu dist ...`
 - `xpu integrations`
 
-It is standalone and does not require `ezpz`.
+It is standalone and has no `ezpz` dependency or integration.
 
-It accepts common `ezpz launch` style flags for easier migration, including:
+It accepts common launcher-style flags for easy migration from other tools, including:
 
 - `-n` / `--nproc`
 - `-ppn` / `--nproc_per_node`
@@ -28,7 +28,7 @@ Provide a hostfile explicitly with `--hostfile` (or via `HOSTFILE`/`PBS_NODEFILE
 
 Scheduler and topology are now deeply integrated:
 
-- Scheduler detection (`auto`) uses `XPU_SCHEDULER`/`EZPZ_SCHEDULER`, then PBS/SLURM env,
+- Scheduler detection (`auto`) uses `XPU_SCHEDULER`, then PBS/SLURM env,
 	then scheduler binaries (`qsub`/`sbatch`).
 - Topology inference enforces consistency for `nproc`, `nhosts`, `nproc_per_node`
 	(no silent mismatch).
@@ -39,9 +39,9 @@ Scheduler and topology are now deeply integrated:
 - If the scheduler-native launcher binary is unavailable (for example `srun` not on PATH),
 	xpu falls back to the next available launcher (`mpiexec`/`mpirun`) while preserving
 	inferred topology.
-- PBS active job fallback now mirrors ezpz style: use `PBS_JOBID` fast path, then
+- PBS active job fallback: use `PBS_JOBID` fast path, then
 	`qstat`-based user-job scan and `/var/spool/pbs/aux` nodefile lookup.
-- SLURM active job fallback now mirrors ezpz style: use `SLURM_JOB_ID` fast path,
+- SLURM active job fallback: use `SLURM_JOB_ID` fast path,
 	then running-job discovery (`sacct`/`squeue`) and `scontrol show job` nodelist lookup.
 
 Classification behavior:
@@ -52,7 +52,7 @@ Classification behavior:
 - If no host is named, a blind rotation is used while spares remain.
 - On `srun` launches, detected bad hosts are cumulatively re-injected via
 	`--exclude=<host1,host2,...>` across retries.
-- The auto-retry classifier now follows an ezpz-style termination matrix with
+- The auto-retry classifier follows an explicit termination matrix with
 	explicit reasons: success, walltime, bad_node_known, bad_node_blind,
 	retryable_unattributed, stuck_pre_training, exhausted.
 - Pattern handling is synchronized more closely: innocent rank-cascade lines
@@ -83,6 +83,47 @@ Accepted `--host-ip-map` JSON shapes:
 - `{ "10.113.12.17": "x4007c6s4b0n0.hsn.cm.aurora.alcf.anl.gov" }`
 - `{ "x4007c6s4b0n0.hsn.cm.aurora.alcf.anl.gov": ["10.113.12.17", "10.113.12.42"] }`
 - `{ "entry1": { "host": "x4007c6s4b0n0", "ips": ["10.113.12.17"] } }`
+
+## Accelerator backends (XPU / CUDA / ROCm)
+
+Backend-specific functionality is isolated in one module per backend with an
+identical public API, so callers use `cuda.func(...)`, `xpu.func(...)`,
+`rocm.func(...)` interchangeably:
+
+```python
+from xpu_launch.accelerators import cuda, xpu, rocm, detect_accelerator
+
+cuda.visible_devices_env()    # "CUDA_VISIBLE_DEVICES"
+xpu.visible_devices_env()     # "ZE_AFFINITY_MASK"
+rocm.visible_devices_env()    # "ROCR_VISIBLE_DEVICES" (+ HIP_VISIBLE_DEVICES)
+
+cuda.distributed_backend()    # "nccl"
+xpu.distributed_backend()     # "xccl"
+rocm.distributed_backend()    # "nccl" (RCCL registers as nccl)
+
+cuda.smi_binary()             # "nvidia-smi"
+xpu.smi_binary()              # "xpu-smi"
+rocm.smi_binary()             # "rocm-smi"
+
+detect_accelerator()          # "xpu" | "cuda" | "rocm" | "none"
+```
+
+Common API per module: `name`, `is_available`, `device_count`,
+`visible_devices_env`, `extra_visible_devices_envs`, `visible_devices`,
+`set_visible_devices`, `distributed_backend`, `collective_library`,
+`smi_binary`, `smi_query_command`, `env_hints`, `crash_patterns`,
+`doctor_payload`.
+
+CLI integration:
+
+- `xpu launch --accelerator {auto,xpu,cuda,rocm,none}` (default `auto`,
+  probing order XPU → CUDA → ROCm; override with `XPU_LAUNCH_ACCELERATOR`).
+- The resolved backend's crash signatures (NCCL/CUDA, Level Zero/oneCCL,
+  HIP/RCCL) augment `--auto-retry` bad-node classification.
+- `XPU_LAUNCH_ACCELERATOR` and `XPU_LAUNCH_DIST_BACKEND` are exported to
+  launched processes.
+- `xpu doctor` reports per-backend availability, device count, SMI tool, and
+  an API-parity check under `xpu.accelerator`.
 
 ## Install
 
@@ -121,7 +162,8 @@ library namespace is `src/xpu_launch`.
 - src/cli/launch.py: launcher runtime and auto-retry/failover logic
 - src/cli/scheduler_topology.py: scheduler detection + topology inference + hostfile resolution
 - src/cli/failover_models.py: NodeAllocation/BadNodeRecord/provenance postmortem model
-- src/cli/ezpz_compat.py: adapter to ezpz settings/machine/distributed/scraper conventions
+- src/cli/compat.py: standalone machine/scheduler/distributed summary helpers
+- src/cli/accelerators/: cuda/xpu/rocm backend modules with identical public API
 - src/cli/doctor_cmd.py, dist_cmd.py, submit_cmd.py, integrations_cmd.py: subsystem entrypoints
 - src/cli/__about__.py: version
 - src/xpu_launch/__init__.py, cli.py, launch.py, __main__.py: public library/API facade

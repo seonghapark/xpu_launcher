@@ -19,7 +19,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from cli.ezpz_compat import get_machine_name, scrape_bad_nodes
+from cli import accelerators
+from cli.compat import get_machine_name
 from cli.failover_models import NodeAllocation
 from cli.scheduler_topology import (
     Topology,
@@ -128,10 +129,39 @@ def _debug_log(enabled: bool, message: str) -> None:
         print(f"xpu auto-retry debug: {message}", file=sys.stderr)
 
 
+_active_accelerator: Optional[str] = None
+_combined_crash_rx_cache: dict[tuple[str, str], re.Pattern[str]] = {}
+
+
+def set_active_accelerator(name: Optional[str]) -> None:
+    """Set the accelerator whose crash signatures augment the classifier."""
+    global _active_accelerator
+    _active_accelerator = None if name in (None, "none", "auto") else name
+
+
+def get_active_accelerator() -> Optional[str]:
+    return _active_accelerator
+
+
 def _get_crash_rx(profile: str) -> re.Pattern[str]:
-    return _CRASH_PATTERNS_BY_PROFILE.get(
+    base = _CRASH_PATTERNS_BY_PROFILE.get(
         profile, _CRASH_PATTERNS_BY_PROFILE["generic"]
     )
+    accel = _active_accelerator
+    if accel is None:
+        return base
+    backend = accelerators.get_accelerator(accel)
+    if backend is None:
+        return base
+    key = (profile, accel)
+    cached = _combined_crash_rx_cache.get(key)
+    if cached is None:
+        cached = re.compile(
+            base.pattern + "|" + backend.crash_patterns(),
+            flags=re.IGNORECASE,
+        )
+        _combined_crash_rx_cache[key] = cached
+    return cached
 
 
 def _get_walltime_rx(profile: str) -> re.Pattern[str]:
@@ -173,7 +203,7 @@ def build_launch_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=prog,
         description=(
-            "Launch a command on the current allocation with ezpz-compatible flags.\n\n"
+            "Launch a command on the current allocation with familiar launcher flags.\n\n"
             "Use '--' to separate launcher flags and the command when needed:\n"
             "  xpu launch -n 8 -ppn 4 -x FOO=bar -- python train.py\n\n"
             "Launcher prefix resolution order:\n"
@@ -316,6 +346,17 @@ def build_launch_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
         help=(
             "Scheduler hint for launch synthesis. 'auto' detects from env; "
             "'pbs' and 'slurm' force scheduler-specific launch command assembly."
+        ),
+    )
+    parser.add_argument(
+        "--accelerator",
+        default="auto",
+        choices=accelerators.ACCELERATOR_CHOICES,
+        help=(
+            "Accelerator backend (xpu=Intel, cuda=NVIDIA, rocm=AMD). 'auto' "
+            "probes the machine; backend crash signatures augment --auto-retry "
+            "classification and XPU_LAUNCH_ACCELERATOR/XPU_LAUNCH_DIST_BACKEND "
+            "are exported to launched processes."
         ),
     )
     parser.add_argument(
@@ -1044,7 +1085,6 @@ def _run_with_auto_retry(
     prior_attempt_had_progress: Optional[bool] = None
     excluded_hosts: set[str] = set()
     scheduler = _resolved_scheduler(args)
-    machine = get_machine_name()
     try:
         while True:
             if (
@@ -1125,8 +1165,7 @@ def _run_with_auto_retry(
                 debug=args.failover_debug,
                 manual_ip_map=manual_ip_map,
             )
-            bad_hosts_scraped = scrape_bad_nodes(attempt_log, machine=machine)
-            bad_hosts = list(dict.fromkeys([*bad_hosts_scraped, *bad_hosts_internal]))
+            bad_hosts = bad_hosts_internal
             result = _classify_attempt(
                 rc,
                 output,
@@ -1385,6 +1424,23 @@ def run(argv: Sequence[str] | None = None) -> int:
 
     if args.auto_retry:
         print("xpu launch: --auto-retry enabled.", file=sys.stderr)
+
+    accelerator = accelerators.detect_accelerator(explicit=args.accelerator)
+    set_active_accelerator(accelerator)
+    accel_backend = accelerators.get_accelerator(accelerator)
+    if accel_backend is not None:
+        os.environ.setdefault("XPU_LAUNCH_ACCELERATOR", accelerator)
+        os.environ.setdefault(
+            "XPU_LAUNCH_DIST_BACKEND", accel_backend.distributed_backend()
+        )
+        print(
+            (
+                f"xpu launch: accelerator={accelerator} "
+                f"(dist_backend={accel_backend.distributed_backend()}, "
+                f"visible_devices_env={accel_backend.visible_devices_env()})"
+            ),
+            file=sys.stderr,
+        )
 
     command = _normalize_command(list(args.command))
     if not command:

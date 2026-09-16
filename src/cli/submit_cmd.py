@@ -11,7 +11,7 @@ from pathlib import Path
 
 import click
 
-from cli.ezpz_compat import get_machine_name
+from cli.compat import get_machine_name
 from cli.scheduler_topology import choose_launcher_binary, detect_scheduler, infer_topology, resolve_hostfile
 
 

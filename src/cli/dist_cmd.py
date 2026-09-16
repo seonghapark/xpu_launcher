@@ -7,7 +7,7 @@ import os
 
 import click
 
-from cli.ezpz_compat import get_distributed_summary
+from cli.compat import get_distributed_summary
 from cli.scheduler_topology import detect_scheduler, infer_topology, resolve_hostfile
 
 

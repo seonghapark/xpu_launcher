@@ -10,7 +10,8 @@ import subprocess
 
 import click
 
-from cli.ezpz_compat import get_distributed_summary
+from cli import accelerators
+from cli.compat import get_distributed_summary
 from cli.scheduler_topology import choose_launcher_binary, detect_scheduler, infer_topology, resolve_hostfile
 
 
@@ -306,6 +307,38 @@ def doctor_cmd(
         topo_details = str(exc)
     checks.append(_check("topology.inference", topo_ok, topo_details))
 
+    detected_accelerator = accelerators.detect_accelerator()
+    accelerator_payload: dict[str, object] = {
+        "detected": detected_accelerator,
+        "backends": {
+            name: module.doctor_payload()
+            for name, module in accelerators.BACKENDS.items()
+        },
+    }
+    checks.append(
+        _check(
+            "accelerator.detected",
+            True,
+            f"accelerator={detected_accelerator}",
+        )
+    )
+    parity_missing = {
+        name: missing
+        for name, module in accelerators.BACKENDS.items()
+        if (missing := accelerators.missing_api(module))
+    }
+    checks.append(
+        _check(
+            "accelerator.backends.parity",
+            not parity_missing,
+            (
+                "cuda/xpu/rocm expose identical functions"
+                if not parity_missing
+                else f"missing={parity_missing}"
+            ),
+        )
+    )
+
     ok_count = sum(1 for c in checks if c["ok"])
     fail_count = len(checks) - ok_count
     payload = {
@@ -314,6 +347,7 @@ def doctor_cmd(
             "hostfile": resolved,
             "distributed": summary,
             "topology": topology_payload,
+            "accelerator": accelerator_payload,
             "checks": checks,
             "ok_count": ok_count,
             "fail_count": fail_count,
