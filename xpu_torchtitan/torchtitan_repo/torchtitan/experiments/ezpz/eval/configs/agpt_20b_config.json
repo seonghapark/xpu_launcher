@@ -1,0 +1,21 @@
+{
+  "architectures": [
+    "LlamaForCausalLM"
+  ],
+  "model_type": "llama",
+  "hidden_size": 5120,
+  "intermediate_size": 14336,
+  "num_hidden_layers": 64,
+  "num_attention_heads": 40,
+  "num_key_value_heads": 8,
+  "max_position_embeddings": 131072,
+  "rope_theta": 500000.0,
+  "rms_norm_eps": 1e-05,
+  "vocab_size": 256128,
+  "hidden_act": "silu",
+  "attention_bias": false,
+  "attention_dropout": 0.0,
+  "bos_token_id": 2,
+  "eos_token_id": 1,
+  "tie_word_embeddings": false
+}

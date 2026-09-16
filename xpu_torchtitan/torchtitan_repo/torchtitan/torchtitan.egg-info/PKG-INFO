@@ -1,0 +1,27 @@
+Metadata-Version: 2.4
+Name: torchtitan
+Version: 0.0.0
+Summary: A PyTorch native platform for training generative AI models
+Author-email: PyTorch Team <packages@pytorch.org>
+Project-URL: GitHub, https://github.com/pytorch/torchtitan
+Project-URL: Documentation, https://github.com/pytorch/torchtitan/tree/main/docs
+Project-URL: Issues, https://github.com/pytorch/torchtitan/issues
+Keywords: pytorch,training,llm
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: torchdata>=0.8.0
+Requires-Dist: datasets>=3.6.0
+Requires-Dist: tokenizers>=0.15.0
+Requires-Dist: safetensors
+Requires-Dist: tyro
+Requires-Dist: tensorboard
+Requires-Dist: wandb
+Requires-Dist: einops
+Requires-Dist: pillow
+Requires-Dist: spmd_types==0.2.1
+Provides-Extra: dev
+Requires-Dist: pre-commit; extra == "dev"
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+Requires-Dist: expecttest; extra == "dev"
+Requires-Dist: pyrefly==0.45.1; extra == "dev"

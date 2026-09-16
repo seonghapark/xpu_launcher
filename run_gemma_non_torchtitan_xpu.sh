@@ -157,7 +157,7 @@ export PYTHON_BIN="${PYTHON_BIN:-/lus/flare/projects/datascience/seonghapark/llm
 export XPU_CMD="${XPU_CMD:-xpu}"
 
 export TRAIN_ENTRY="${TRAIN_ENTRY:-${SCRIPT_DIR}/non_torchtitan_gemma_train.py}"
-export MODEL_PATH="${MODEL_PATH:-/lus/flare/projects/datascience/seonghapark/torchtitan/assets/hf/gemma-7b}"
+export MODEL_PATH="${MODEL_PATH:-${SCRIPT_DIR}/xpu_torchtitan/torchtitan_repo/assets/hf/gemma-7b}"
 export DATASET_PATH="${DATASET_PATH:-pg19,multi_news}"
 export LOG_DIR="${LOG_DIR:-${SCRIPT_DIR}/outputs/gemma_non_torchtitan_xpu_$(date +%Y%m%d_%H%M%S)}"
 

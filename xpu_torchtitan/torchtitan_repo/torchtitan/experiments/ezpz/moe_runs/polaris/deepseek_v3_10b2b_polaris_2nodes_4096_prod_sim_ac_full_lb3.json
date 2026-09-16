@@ -1,0 +1,60 @@
+{
+  "training": {
+    "local_batch_size": 3,
+    "seq_len": 4096,
+    "steps": 1000,
+    "gc_freq": 1000
+  },
+  "model_spec": {
+    "model": {
+      "layer": {
+        "attention": {
+          "attn_backend": "sdpa",
+          "attn_mask_type": "causal",
+          "qk_nope_head_dim": 64,
+          "qk_rope_head_dim": 64
+        }
+      }
+    }
+  },
+  "parallelism": {
+    "data_parallel_replicate_degree": 2,
+    "data_parallel_shard_degree": 4,
+    "tensor_parallel_degree": 1,
+    "pipeline_parallel_degree": 1,
+    "context_parallel_degree": 1,
+    "expert_parallel_degree": 1,
+    "expert_tensor_parallel_degree": 1
+  },
+  "metrics": {
+    "enable_wandb": true,
+    "log_freq": 50
+  },
+  "checkpoint": {
+    "enable": true,
+    "folder": "checkpoints",
+    "interval": 1000,
+    "async_mode": "async",
+    "enable_first_step_checkpoint": false,
+    "last_save_model_only": false,
+    "load_step": -1
+  },
+  "activation_checkpoint": {
+    "mode": "full",
+    "determinism_check": "none"
+  },
+  "dataloader": {
+    "dataset": "blendcorpus",
+    "dataset_path": "torchtitan/experiments/ezpz/data-lists/polaris/books.txt",
+    "num_workers": 2,
+    "persistent_workers": true,
+    "prefetch_factor": 2,
+    "train_iters": 1000
+  },
+  "compile": {
+    "enable": false
+  },
+  "debug": {
+    "print_config": true
+  }
+}

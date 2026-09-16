@@ -1,0 +1,53 @@
+{
+  "training": {
+    "local_batch_size": 1,
+    "seq_len": 4096,
+    "steps": 1000,
+    "gc_freq": 200
+  },
+  "model_spec": {
+    "model": {
+      "layer": {
+        "attention": {
+          "attn_backend": "sdpa",
+          "attn_mask_type": "causal",
+          "qk_nope_head_dim": 64,
+          "qk_rope_head_dim": 64
+        }
+      }
+    }
+  },
+  "parallelism": {
+    "data_parallel_replicate_degree": 2,
+    "data_parallel_shard_degree": 12,
+    "tensor_parallel_degree": 1,
+    "pipeline_parallel_degree": 1,
+    "context_parallel_degree": 1,
+    "expert_parallel_degree": 12,
+    "expert_tensor_parallel_degree": 1
+  },
+  "metrics": {
+    "enable_wandb": true,
+    "log_freq": 10
+  },
+  "checkpoint": {
+    "enable": true,
+    "folder": "checkpoints",
+    "interval": 200,
+    "async_mode": "async",
+    "enable_first_step_checkpoint": false,
+    "last_save_model_only": false,
+    "load_step": -1
+  },
+  "dataloader": {
+    "dataset": "blendcorpus",
+    "dataset_path": "torchtitan/experiments/ezpz/data-lists/aurora/books.txt",
+    "train_iters": 1000
+  },
+  "compile": {
+    "enable": false
+  },
+  "debug": {
+    "print_config": true
+  }
+}

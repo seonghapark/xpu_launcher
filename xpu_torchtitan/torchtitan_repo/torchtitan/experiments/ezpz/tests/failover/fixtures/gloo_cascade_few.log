@@ -1,0 +1,5 @@
+[2026-05-23 17:00:00] training started step 800
+[rank8]: some_other_log_line
+x4011c0s4b0n0.hsn.cm.aurora.alcf.anl.gov: rank 8 died from signal 11
+x4011c0s4b0n0.hsn.cm.aurora.alcf.anl.gov: rank 4 died from signal 15
+[2026-05-23[2m [0m17:02:00][[32mI[0m][[95mezpz[0m/[35mlaunch[0m:[31m518[0m:[3;92mlaunch[0m] Execution finished with [1;36m143[0m.

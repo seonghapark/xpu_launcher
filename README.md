@@ -195,7 +195,7 @@ xpu submit --hostfile /path/to/hosts --nproc 8 --nproc-per-node 4 --command "pyt
 
 Two executable helper scripts are included in this repo root:
 
-- `run_train_torchtitan.sh`: `xpu launch` wrapper for real TorchTitan training.
+- `xpu_torchtitan/run_train_torchtitan.sh`: `xpu launch` wrapper for real TorchTitan training.
 - `run_train_non_torchtitan.sh`: `xpu launch` wrapper for generic Python training scripts.
 
 Both support single-node and multi-node modes.
@@ -206,10 +206,10 @@ Both support single-node and multi-node modes.
 cd /lus/flare/projects/datascience/seonghapark/xpu_launch
 
 # single node
-./run_train_torchtitan.sh single --dry-run
+./xpu_torchtitan/run_train_torchtitan.sh single --dry-run
 
 # multi node
-./run_train_torchtitan.sh multi /path/to/hosts --dry-run
+./xpu_torchtitan/run_train_torchtitan.sh multi /path/to/hosts --dry-run
 
 # real run-style example
 MODULE=llama3 \
@@ -219,10 +219,10 @@ DATASET_NAME=c4 \
 DATASET_PATH=allenai/c4 \
 LOG_DIR=/path/to/logs/tt_run1 \
 CKPT_FOLDER=checkpoint \
-./run_train_torchtitan.sh multi /path/to/hosts -- --training.steps 5000
+./xpu_torchtitan/run_train_torchtitan.sh multi /path/to/hosts -- --training.steps 5000
 ```
 
-Key env vars for `run_train_torchtitan.sh`:
+Key env vars for `xpu_torchtitan/run_train_torchtitan.sh`:
 
 - `MODULE` (default: `llama3`)
 - `CONFIG` (default: `llama3_debugmodel`)

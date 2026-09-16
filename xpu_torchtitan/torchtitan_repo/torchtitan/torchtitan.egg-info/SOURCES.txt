@@ -1,0 +1,6 @@
+pyproject.toml
+torchtitan.egg-info/PKG-INFO
+torchtitan.egg-info/SOURCES.txt
+torchtitan.egg-info/dependency_links.txt
+torchtitan.egg-info/requires.txt
+torchtitan.egg-info/top_level.txt

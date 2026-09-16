@@ -1,0 +1,5 @@
+Building device mesh with parallelism: dp_shard=3072, tp=2
+[rank250]: torch.distributed.broadcast(seed_tensor, src=0)
+[rank250]: MemoryError: std::bad_alloc
+x4011c0s4b0n0.hsn.cm.aurora.alcf.anl.gov: rank 8 died from signal 11
+[2026-05-23[2m [0m17:02:00][[32mI[0m][[95mezpz[0m/[35mlaunch[0m:[31m518[0m:[3;92mlaunch[0m] Execution finished with [1;36m143[0m.

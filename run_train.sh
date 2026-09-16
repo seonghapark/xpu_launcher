@@ -93,25 +93,30 @@ if [[ "${1:-}" == "--" ]]; then
 fi
 
 XPU_CMD="${XPU_CMD:-xpu}"
-PYTHON_BIN="${PYTHON_BIN:-python}"
+PYTHON_BIN="${PYTHON_BIN:-/lus/flare/projects/datascience/seonghapark/venv/bin/python}"
 SCHEDULER="${SCHEDULER:-auto}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
+
+# Resolve launcher relative to this repo, not the caller's cwd
+LAUNCHER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# PYTHON_BIN may target a compute-node-only frameworks build; fall back for the
+# launcher process itself (the training command still uses PYTHON_BIN as given).
+LAUNCHER_PY="$PYTHON_BIN"
+if ! command -v "$LAUNCHER_PY" >/dev/null 2>&1; then
+  LAUNCHER_PY="$(command -v python3 || command -v python || true)"
+fi
 
 XPU_INVOKE=()
 if command -v "$XPU_CMD" >/dev/null 2>&1; then
   XPU_INVOKE=("$XPU_CMD")
-elif [[ -x "./.venv/bin/xpu" ]]; then
-  XPU_INVOKE=("./.venv/bin/xpu")
-elif command -v "$PYTHON_BIN" >/dev/null 2>&1 && [[ -d "$(pwd)/src/cli" ]]; then
-  export PYTHONPATH="$(pwd)/src${PYTHONPATH:+:$PYTHONPATH}"
-  XPU_INVOKE=("$PYTHON_BIN" "-m" "cli")
-elif [[ -x "../torchtitan/.venv/bin/xpu" ]]; then
-  XPU_INVOKE=("../torchtitan/.venv/bin/xpu")
-elif command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-  export PYTHONPATH="$(pwd)/src${PYTHONPATH:+:$PYTHONPATH}"
-  XPU_INVOKE=("$PYTHON_BIN" "-m" "cli")
+elif [[ -n "$LAUNCHER_PY" ]] && [[ -d "${LAUNCHER_ROOT}/src/cli" ]]; then
+  export PYTHONPATH="${LAUNCHER_ROOT}/src${PYTHONPATH:+:$PYTHONPATH}"
+  XPU_INVOKE=("$LAUNCHER_PY" "-m" "cli")
+elif [[ -x "${LAUNCHER_ROOT}/.venv/bin/xpu" ]]; then
+  XPU_INVOKE=("${LAUNCHER_ROOT}/.venv/bin/xpu")
 else
-  echo "error: cannot find xpu launcher (PATH, ./.venv/bin/xpu, ../torchtitan/.venv/bin/xpu)" >&2
+  echo "error: cannot find xpu launcher (PATH, ${LAUNCHER_ROOT}/src/cli, ${LAUNCHER_ROOT}/.venv/bin/xpu)" >&2
   exit 1
 fi
 

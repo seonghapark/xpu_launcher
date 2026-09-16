@@ -1,0 +1,17 @@
+torchdata>=0.8.0
+datasets>=3.6.0
+tokenizers>=0.15.0
+safetensors
+tyro
+tensorboard
+wandb
+einops
+pillow
+spmd_types==0.2.1
+
+[dev]
+pre-commit
+pytest
+pytest-cov
+expecttest
+pyrefly==0.45.1

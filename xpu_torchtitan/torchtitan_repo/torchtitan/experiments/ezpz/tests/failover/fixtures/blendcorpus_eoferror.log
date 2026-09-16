@@ -1,0 +1,3 @@
+[rank10]: shuffle_idx = np.load(idx_path['shuffle'], allow_pickle=True, mmap_mode='r')
+[rank10]: EOFError: No data left in file
+[2026-05-23[2m [0m17:02:00][[32mI[0m][[95mezpz[0m/[35mlaunch[0m:[31m518[0m:[3;92mlaunch[0m] Execution finished with [1;36m143[0m.
