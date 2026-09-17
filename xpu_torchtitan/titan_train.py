@@ -20,8 +20,15 @@ from __future__ import annotations
 
 import os
 import sys
+import warnings
 from pathlib import Path
 from typing import Any
+
+# Silence import-time warnings on every rank (set XPU_SHOW_WARNINGS=1 to keep them)
+if os.environ.get("XPU_SHOW_WARNINGS", "0") != "1":
+    warnings.filterwarnings("ignore")
+    os.environ.setdefault("PYTHONWARNINGS", "ignore")  # inherited by worker subprocesses
+    os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
 
 _TORCHTITAN_ROOT = Path(
     os.environ.get("TORCHTITAN_ROOT", Path(__file__).resolve().parent / "torchtitan_repo")
@@ -38,6 +45,23 @@ if torch.__version__ < "2.11":
     except Exception:
         pass
 
+# torch 2.10+ natively supports Enum in torch.compile; torchao (read-only
+# system site-packages) still calls register_constant() on Enums, emitting a
+# deprecation warning per rank. Make that call a no-op for Enum subclasses.
+if torch.__version__ >= "2.10":
+    import enum
+
+    import torch.utils._pytree as _pytree
+
+    _orig_register_constant = _pytree.register_constant
+
+    def _register_constant_skip_enums(cls, *args, **kwargs):
+        if isinstance(cls, type) and issubclass(cls, enum.Enum):
+            return cls
+        return _orig_register_constant(cls, *args, **kwargs)
+
+    _pytree.register_constant = _register_constant_skip_enums
+
 from torchtitan.components.optimizer import OptimizersContainer, default_adamw
 from torchtitan.config import ConfigManager
 from torchtitan.experiments.ezpz.optimizer import (
@@ -51,6 +75,7 @@ from torchtitan.experiments.ezpz.optimizer import (
     default_spam,
     default_torch_muon,
 )
+from torchtitan.experiments.ezpz import dist_compat
 from torchtitan.experiments.ezpz.trainer import FaultTolerantTrainer
 from torchtitan.experiments.ezpz.xccl_split_group_workaround import (
     maybe_install_xccl_split_group_workaround,
@@ -164,6 +189,9 @@ def _upgrade_to_fault_tolerant(config: Any) -> Any:
 def main(args: list[str] | None = None) -> None:
     init_logger()
 
+    # mpiexec/PALS does not set RANK/LOCAL_RANK/MASTER_*; Trainer requires them
+    dist_compat.setup_torch()
+
     # --- XPU workaround 2: nested DeviceMesh split_group on xccl ---
     maybe_install_xccl_split_group_workaround()
 
@@ -216,3 +244,14 @@ def main(args: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
+    # Hard-exit: a non-daemon torch signal-handler thread can wedge normal
+    # interpreter shutdown under mpiexec (see original ezpz train entry).
+    try:
+        from multiprocessing.resource_tracker import _resource_tracker as _rt
+        import signal
+
+        if getattr(_rt, "_pid", None) is not None:
+            os.kill(_rt._pid, signal.SIGKILL)
+    except Exception:
+        pass
+    os._exit(0)

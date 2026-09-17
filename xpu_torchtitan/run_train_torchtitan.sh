@@ -21,8 +21,10 @@ Core env variables:
   MODULE              (default: llama3)
   CONFIG              (default: llama3_debugmodel)
   HF_ASSETS_PATH      (default: ../torchtitan/tests/assets/tokenizer)
-  DATASET_NAME        (default: c4_test)
+  DATASET_NAME        (default: pg19_multinews — PG19+MultiNews interleaved, streaming;
+                       use c4_test for the offline bundled smoke sample)
   DATASET_PATH        (optional, default: empty)
+  SEQ_LEN             (default: 16384, passed as --training.seq_len)
   LOG_DIR             (default: ../torchtitan/outputs/xpu_torchtitan_<timestamp>)
   CKPT_FOLDER         (default: checkpoint)
   TRAINING_STEPS      (default: 100)
@@ -109,11 +111,12 @@ TORCHTITAN_ROOT="${TORCHTITAN_ROOT:-${SCRIPT_DIR}/torchtitan_repo}"
 MODULE="${MODULE:-llama3}"
 CONFIG="${CONFIG:-llama3_debugmodel}"
 HF_ASSETS_PATH="${HF_ASSETS_PATH:-${TORCHTITAN_ROOT}/tests/assets/tokenizer}"
-DATASET_NAME="${DATASET_NAME:-c4_test}"
+DATASET_NAME="${DATASET_NAME:-pg19_multinews}"
 DATASET_PATH="${DATASET_PATH:-}"
 LOG_DIR="${LOG_DIR:-${TORCHTITAN_ROOT}/outputs/xpu_torchtitan_$(date +%Y%m%d_%H%M%S)}"
 CKPT_FOLDER="${CKPT_FOLDER:-checkpoint}"
 TRAINING_STEPS="${TRAINING_STEPS:-100}"
+SEQ_LEN="${SEQ_LEN:-16384}"
 TRAIN_PYTHON_BIN_DEFAULT="/lus/flare/projects/datascience/seonghapark/venv/bin/python"
 if [[ ! -x "$TRAIN_PYTHON_BIN_DEFAULT" ]] && [[ -x "${TORCHTITAN_ROOT}/.venv/bin/python" ]]; then
   TRAIN_PYTHON_BIN_DEFAULT="${TORCHTITAN_ROOT}/.venv/bin/python"
@@ -134,6 +137,7 @@ TRAIN_CMD=(
   "--dump_folder" "$LOG_DIR"
   "--dataloader.dataset" "$DATASET_NAME"
   "--training.steps" "$TRAINING_STEPS"
+  "--training.seq_len" "$SEQ_LEN"
   "--checkpoint.enable"
   "--checkpoint.folder" "$CKPT_FOLDER"
 )
@@ -146,12 +150,34 @@ if [[ -n "$DATASET_PATH" ]]; then
   TRAIN_CMD+=("--dataloader.dataset_path" "$DATASET_PATH")
 fi
 
+if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+  TRAIN_CMD+=("${EXTRA_ARGS[@]}")
+fi
+
 if [[ ! -d "$TORCHTITAN_ROOT" ]]; then
   echo "error: TORCHTITAN_ROOT not found: $TORCHTITAN_ROOT" >&2
   exit 1
 fi
 
 cd "$TORCHTITAN_ROOT"
+
+cat >&2 <<EOF
+[ARGS] mode              = ${MODE}$( [[ "$MODE" == "multi" ]] && echo " (hostfile=${HOSTFILE:-auto from PBS_NODEFILE})" )
+[ARGS] MODULE/CONFIG     = ${MODULE} / ${CONFIG}
+[ARGS] DATASET_NAME      = ${DATASET_NAME}
+[ARGS] DATASET_PATH      = ${DATASET_PATH:-<unset>}
+[ARGS] TRAINING_STEPS    = ${TRAINING_STEPS}
+[ARGS] SEQ_LEN           = ${SEQ_LEN}
+[ARGS] OPTIMIZER         = ${OPTIMIZER:-<config default>}
+[ARGS] FT_TRAINER        = ${FT_TRAINER}
+[ARGS] TORCHTITAN_ROOT   = ${TORCHTITAN_ROOT}
+[ARGS] HF_ASSETS_PATH    = ${HF_ASSETS_PATH}
+[ARGS] LOG_DIR           = ${LOG_DIR}
+[ARGS] CKPT_FOLDER       = ${CKPT_FOLDER}
+[ARGS] TRAIN_PYTHON_BIN  = ${TRAIN_PYTHON_BIN}
+[ARGS] topology          = NNODES=${NNODES:-auto} NPROC_PER_NODE=${NPROC_PER_NODE:-4} NPROC=${NPROC:-auto} SPARE_NODES=${SPARE_NODES:-auto} AUTO_RETRY=${AUTO_RETRY:-1(multi)}
+[ARGS] extra train args  = ${EXTRA_ARGS[*]:-<none>}
+EOF
 
 CMD=("$BASE_LAUNCH_SCRIPT" "$MODE")
 if [[ "$DRY_RUN" == "1" ]]; then

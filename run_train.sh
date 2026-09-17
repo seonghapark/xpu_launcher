@@ -102,6 +102,12 @@ PYTHON_BIN="${PYTHON_BIN:-/lus/flare/projects/datascience/seonghapark/venv/bin/p
 SCHEDULER="${SCHEDULER:-auto}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
 
+# Silence python import-time warnings on all ranks (XPU_SHOW_WARNINGS=1 re-enables)
+if [[ "${XPU_SHOW_WARNINGS:-0}" != "1" ]]; then
+  export PYTHONWARNINGS="${PYTHONWARNINGS:-ignore}"
+  export TORCH_CPP_LOG_LEVEL="${TORCH_CPP_LOG_LEVEL:-ERROR}"
+fi
+
 # Resolve launcher relative to this repo, not the caller's cwd
 LAUNCHER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

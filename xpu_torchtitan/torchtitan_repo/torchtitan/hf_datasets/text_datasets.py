@@ -34,6 +34,33 @@ def _process_c4_text(sample: dict[str, Any]) -> str:
     return sample["text"]
 
 
+def _load_pg19_multinews(dataset_path: str, split: str = "train"):
+    """Interleave PG19 (books) and MultiNews (news) streams.
+
+    ``dataset_path`` may override as "pg19_id+multinews_id"; defaults to the
+    public mirrors used by the gemma runs.
+    """
+    from datasets import interleave_datasets
+
+    pg19_id, _, multinews_id = (dataset_path or "").partition("+")
+    pg19_id = pg19_id or "emozilla/pg19"
+    multinews_id = multinews_id or "Awesome075/multi_news_parquet"
+    pg19 = load_dataset(pg19_id, split=split, streaming=True)
+    multinews = load_dataset(multinews_id, split=split, streaming=True)
+    return interleave_datasets(
+        [pg19, multinews], stopping_strategy="all_exhausted"
+    )
+
+
+def _process_pg19_multinews_text(sample: dict[str, Any]) -> str:
+    """PG19 has 'text'; MultiNews has 'document'/'summary'."""
+    text = sample.get("text")
+    if isinstance(text, str) and text.strip():
+        return text
+    parts = [sample.get("document"), sample.get("summary")]
+    return "\n\n".join(p for p in parts if isinstance(p, str) and p.strip())
+
+
 # Add your dataset here - more information at docs/datasets.md
 DATASETS = {
     "c4": DatasetConfig(
@@ -50,6 +77,11 @@ DATASETS = {
         path="allenai/c4",
         loader=partial(_load_c4_dataset, split="validation"),
         sample_processor=_process_c4_text,
+    ),
+    "pg19_multinews": DatasetConfig(
+        path="emozilla/pg19+Awesome075/multi_news_parquet",
+        loader=partial(_load_pg19_multinews, split="train"),
+        sample_processor=_process_pg19_multinews_text,
     ),
 }
 

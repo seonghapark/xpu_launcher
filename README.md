@@ -226,13 +226,46 @@ Key env vars for `xpu_torchtitan/run_train_torchtitan.sh`:
 
 - `MODULE` (default: `llama3`)
 - `CONFIG` (default: `llama3_debugmodel`)
-- `HF_ASSETS_PATH` (default: `../torchtitan/tests/assets/tokenizer`)
-- `DATASET_NAME` (default: `c4_test`)
+- `HF_ASSETS_PATH` (default: `xpu_torchtitan/torchtitan_repo/tests/assets/tokenizer`)
+- `DATASET_NAME` (default: `pg19_multinews` — PG19+MultiNews interleaved, HF streaming; `c4_test` = offline bundled sample)
 - `DATASET_PATH` (optional)
-- `LOG_DIR` (default: `../torchtitan/outputs/xpu_torchtitan_<timestamp>`)
+- `LOG_DIR` (default: `xpu_torchtitan/torchtitan_repo/outputs/xpu_torchtitan_<timestamp>`)
 - `CKPT_FOLDER` (default: `checkpoint`)
 - `TRAINING_STEPS` (default: `100`)
-- `TORCHTITAN_ROOT` (default: `../torchtitan`)
+- `SEQ_LEN` (default: `16384`, passed as `--training.seq_len`)
+- `TORCHTITAN_ROOT` (default: `xpu_torchtitan/torchtitan_repo`)
+
+#### `config_registry.py` is mandatory for every MODULE
+
+TorchTitan resolves `MODULE`/`CONFIG` through a `config_registry.py` file — a
+new module **must** ship one or config parsing fails with
+`Cannot import config_registry for module '<name>'`.
+
+Resolution order for `MODULE=<name>`
+(`torchtitan/config/manager.py`):
+
+1. `torchtitan.models.<name>.config_registry`
+2. `torchtitan.experiments.<name>.config_registry`
+3. `torchtitan.experiments.rl.examples.<name>.config_registry`
+4. Fully qualified paths also work: `MODULE=my.pkg` tries
+   `my.pkg.config_registry`, then `my.pkg` itself.
+
+`CONFIG=<name>` must be a **callable defined in that file** returning a
+`Trainer.Config`. Minimal example
+(`torchtitan_repo/torchtitan/models/mymodel/config_registry.py`):
+
+```python
+from torchtitan.trainer import Trainer
+
+def mymodel_debug() -> Trainer.Config:
+    cfg = ...  # build model_spec / dataloader / optimizer config
+    return cfg
+```
+
+Then run with `MODULE=mymodel CONFIG=mymodel_debug`. Existing examples:
+`torchtitan/models/llama3/config_registry.py` (used by the defaults
+`MODULE=llama3 CONFIG=llama3_debugmodel`) and
+`torchtitan/experiments/ezpz/agpt/config_registry.py` (`ezpz_agpt_2b` etc.).
 
 ### Non-TorchTitan Template
 
