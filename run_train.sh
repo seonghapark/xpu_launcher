@@ -66,9 +66,14 @@ done
 
 if [[ "$MODE" == "multi" ]]; then
   if [[ -z "$HOSTFILE" ]]; then
-    echo "error: multi mode requires <hostfile>" >&2
-    usage
-    exit 1
+    if [[ -n "${PBS_NODEFILE:-}" && -f "${PBS_NODEFILE}" ]]; then
+      HOSTFILE="$(mktemp /tmp/xpu_hosts.XXXXXX)"
+      awk 'NF {print $1}' "$PBS_NODEFILE" | sort -u > "$HOSTFILE"
+      echo "[INFO] multi mode: derived hostfile from PBS_NODEFILE ($(wc -l < "$HOSTFILE") nodes)" >&2
+    else
+      echo "error: multi mode requires <hostfile> (or run inside a PBS job with PBS_NODEFILE)" >&2
+      exit 1
+    fi
   fi
   if [[ ! -f "$HOSTFILE" ]]; then
     echo "error: hostfile not found: $HOSTFILE" >&2
@@ -102,10 +107,16 @@ LAUNCHER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # PYTHON_BIN may target a compute-node-only frameworks build; fall back for the
 # launcher process itself (the training command still uses PYTHON_BIN as given).
-LAUNCHER_PY="$PYTHON_BIN"
-if ! command -v "$LAUNCHER_PY" >/dev/null 2>&1; then
-  LAUNCHER_PY="$(command -v python3 || command -v python || true)"
-fi
+_py_ok() { command -v "$1" >/dev/null 2>&1 && "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; }
+LAUNCHER_PY=""
+# Last candidate: login-node frameworks python (module may not be loaded)
+for cand in "$PYTHON_BIN" "${LAUNCHER_ROOT}/.venv/bin/python" python3 python \
+    /opt/aurora/26.26.0/frameworks/aurora_frameworks-2025.3.1/bin/python3; do
+  if _py_ok "$cand"; then
+    LAUNCHER_PY="$cand"
+    break
+  fi
+done
 
 XPU_INVOKE=()
 if command -v "$XPU_CMD" >/dev/null 2>&1; then

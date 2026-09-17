@@ -11,8 +11,6 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import cast
 
-import ezpz
-
 import torch
 from torch.distributed.elastic.multiprocessing.errors import record
 
@@ -261,7 +259,9 @@ class FaultTolerantTrainer(Trainer):
 
         # if ezpz.dist
         # if ezpz.distributed.asni
-        if ezpz.distributed.verify_wandb():
+        from torchtitan.experiments.ezpz import dist_compat
+
+        if dist_compat.verify_wandb():
             import wandb
             if wandb.run is not None:
                 wandb.run.watch(model, log="all")

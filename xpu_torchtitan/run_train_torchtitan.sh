@@ -14,7 +14,8 @@ usage() {
   cat <<'EOF'
 Usage:
   run_train_torchtitan.sh single [--dry-run] [-- <extra torchtitan args...>]
-  run_train_torchtitan.sh multi <hostfile> [--dry-run] [-- <extra torchtitan args...>]
+  run_train_torchtitan.sh multi [hostfile] [--dry-run] [-- <extra torchtitan args...>]
+                          (hostfile optional inside a PBS job: PBS_NODEFILE is used)
 
 Core env variables:
   MODULE              (default: llama3)
@@ -79,15 +80,19 @@ done
 
 if [[ "$MODE" == "multi" ]]; then
   if [[ -z "$HOSTFILE" ]]; then
-    echo "error: multi mode requires <hostfile>" >&2
-    usage
-    exit 1
+    # No hostfile given: run_train.sh derives one from PBS_NODEFILE
+    if [[ -z "${PBS_NODEFILE:-}" || ! -f "${PBS_NODEFILE:-}" ]]; then
+      echo "error: multi mode requires <hostfile> (or run inside a PBS job with PBS_NODEFILE)" >&2
+      usage
+      exit 1
+    fi
+  else
+    if [[ ! -f "$HOSTFILE" ]]; then
+      echo "error: hostfile not found: $HOSTFILE" >&2
+      exit 1
+    fi
+    HOSTFILE="$(realpath "$HOSTFILE")"
   fi
-  if [[ ! -f "$HOSTFILE" ]]; then
-    echo "error: hostfile not found: $HOSTFILE" >&2
-    exit 1
-  fi
-  HOSTFILE="$(realpath "$HOSTFILE")"
 elif [[ "$MODE" != "single" ]]; then
   echo "error: mode must be 'single' or 'multi'" >&2
   usage
@@ -117,8 +122,12 @@ TRAIN_PYTHON_BIN="${TRAIN_PYTHON_BIN:-$TRAIN_PYTHON_BIN_DEFAULT}"
 
 mkdir -p "$LOG_DIR"
 
+# titan_train.py = ezpz-free entry: FaultTolerantTrainer upgrade (FT_TRAINER=0
+# to disable), --optimizer swap, IPEX + xccl split-group XPU workarounds
+export TORCHTITAN_ROOT
+export FT_TRAINER="${FT_TRAINER:-1}"
 TRAIN_CMD=(
-  "$TRAIN_PYTHON_BIN" "-m" "torchtitan.train"
+  "$TRAIN_PYTHON_BIN" "${SCRIPT_DIR}/titan_train.py"
   "--module" "$MODULE"
   "--config" "$CONFIG"
   "--hf_assets_path" "$HF_ASSETS_PATH"
@@ -129,12 +138,12 @@ TRAIN_CMD=(
   "--checkpoint.folder" "$CKPT_FOLDER"
 )
 
-if [[ -n "$DATASET_PATH" ]]; then
-  TRAIN_CMD+=("--dataloader.dataset_path" "$DATASET_PATH")
+if [[ -n "${OPTIMIZER:-}" ]]; then
+  TRAIN_CMD+=("--optimizer" "$OPTIMIZER")
 fi
 
-if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
-  TRAIN_CMD+=("${EXTRA_ARGS[@]}")
+if [[ -n "$DATASET_PATH" ]]; then
+  TRAIN_CMD+=("--dataloader.dataset_path" "$DATASET_PATH")
 fi
 
 if [[ ! -d "$TORCHTITAN_ROOT" ]]; then
@@ -148,7 +157,7 @@ CMD=("$BASE_LAUNCH_SCRIPT" "$MODE")
 if [[ "$DRY_RUN" == "1" ]]; then
   CMD+=("--dry-run")
 fi
-if [[ "$MODE" == "multi" ]]; then
+if [[ "$MODE" == "multi" && -n "$HOSTFILE" ]]; then
   CMD+=("$HOSTFILE")
 fi
 CMD+=("--")
