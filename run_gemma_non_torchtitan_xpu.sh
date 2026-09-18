@@ -5,11 +5,18 @@ set -euo pipefail
 # This script configures Aurora XPU/IPEX/oneCCL-related runtime variables, then
 # delegates launch construction to ./run_train_non_torchtitan.sh.
 #
+# Run shape is selected with GEMMA_PRESET (see presets/gemma_*.env):
+#   smoke (default) - 1 step on non_torchtitan_gemma_train.py, for verifying
+#                     the launch path, dataset access and device binding
+#   fsdp            - full 158000-step run on non_torchtitan_gemma_train_FSDP.py
+# Any variable a preset sets can still be overridden from the environment.
+#
 # Examples:
 #   ./run_gemma_non_torchtitan_xpu.sh single --dry-run
 #   ./run_gemma_non_torchtitan_xpu.sh single
 #   NPROC_PER_NODE=2 ./run_gemma_non_torchtitan_xpu.sh single -- --steps 1 --seq-len 64
 #   ./run_gemma_non_torchtitan_xpu.sh multi /path/to/hosts --dry-run
+#   GEMMA_PRESET=fsdp ./run_gemma_non_torchtitan_xpu.sh multi /path/to/hosts
 
 usage() {
   cat <<'EOF'
@@ -17,8 +24,12 @@ Usage:
   run_gemma_non_torchtitan_xpu.sh single [--dry-run] [-- <extra train args...>]
   run_gemma_non_torchtitan_xpu.sh multi <hostfile> [--dry-run] [-- <extra train args...>]
 
-Defaults:
-  MODEL_PATH=/lus/flare/projects/datascience/seonghapark/torchtitan/assets/hf/gemma-7b
+Presets (GEMMA_PRESET, default "smoke"; see presets/gemma_<name>.env):
+  smoke  1 step, batch 1, plain trainer      (non_torchtitan_gemma_train.py)
+  fsdp   158000 steps, batch 4, FSDP2 trainer (non_torchtitan_gemma_train_FSDP.py)
+
+Defaults (smoke preset; a preset value loses to an env override):
+  MODEL_PATH=<repo>/xpu_torchtitan/torchtitan_repo/assets/hf/gemma-7b
   DATASET_PATH=pg19,multi_news
   DATASET_CACHE_DIR=/lus/flare/projects/datascience/seonghapark/llm_evaluation/evaluation/datasets/hf_cache
   DATASET_MAX_SAMPLES=64
@@ -149,28 +160,50 @@ export HTTPS_PROXY="${HTTPS_PROXY:-http://proxy.alcf.anl.gov:3128}"
 export http_proxy="${http_proxy:-http://proxy.alcf.anl.gov:3128}"
 export https_proxy="${https_proxy:-http://proxy.alcf.anl.gov:3128}"
 
-# Launch defaults. Keep this smoke run conservative unless the caller overrides.
+# ---------------------------------------------------------------------------
+# Preset
+#
+# A preset is a small env file under presets/ that fixes the shape of the run:
+# which trainer entrypoint to use, how many steps, what batch size. It is
+# sourced here, ahead of the defaults below, and every assignment inside it
+# uses ":=" so a value the caller already exported always wins over it.
+# ---------------------------------------------------------------------------
+GEMMA_PRESET="${GEMMA_PRESET:-smoke}"
+PRESET_FILE="${SCRIPT_DIR}/presets/gemma_${GEMMA_PRESET}.env"
+if [[ ! -f "$PRESET_FILE" ]]; then
+  echo "[ERROR] unknown GEMMA_PRESET '${GEMMA_PRESET}' (no such file: ${PRESET_FILE})" >&2
+  echo "        available presets:" >&2
+  for _f in "${SCRIPT_DIR}"/presets/gemma_*.env; do
+    [[ -e "$_f" ]] || continue
+    _p="${_f##*/gemma_}"
+    echo "          ${_p%.env}" >&2
+  done
+  exit 1
+fi
+# shellcheck source=/dev/null
+source "$PRESET_FILE"
+
+# Launch defaults, for anything the preset does not pin down.
 export SCHEDULER="${SCHEDULER:-auto}"
 export NPROC_PER_NODE="${NPROC_PER_NODE:-1}"
 export AUTO_RETRY="${AUTO_RETRY:-0}"
 export PYTHON_BIN="${PYTHON_BIN:-/lus/flare/projects/datascience/seonghapark/llm_evaluation/venv/bin/python}"
 export XPU_CMD="${XPU_CMD:-xpu}"
 
-export TRAIN_ENTRY="${TRAIN_ENTRY:-${SCRIPT_DIR}/non_torchtitan_gemma_train.py}"
+# TRAIN_ENTRY, TRAIN_STEPS, SEQ_LEN, BATCH_SIZE, MICRO_BATCH_SIZE,
+# LOGIT_CHUNK_SIZE, DATASET_MAX_SAMPLES, DISABLE_TIME_CHECKPOINT and
+# LOG_DIR_TAG all come from the preset sourced above.
+export TRAIN_ENTRY
 export MODEL_PATH="${MODEL_PATH:-${SCRIPT_DIR}/xpu_torchtitan/torchtitan_repo/assets/hf/gemma-7b}"
 export DATASET_PATH="${DATASET_PATH:-pg19,multi_news}"
-export LOG_DIR="${LOG_DIR:-${SCRIPT_DIR}/outputs/gemma_non_torchtitan_xpu_$(date +%Y%m%d_%H%M%S)}"
+export LOG_DIR="${LOG_DIR:-${SCRIPT_DIR}/outputs/${LOG_DIR_TAG}_$(date +%Y%m%d_%H%M%S)}"
 
-TRAIN_STEPS="${TRAIN_STEPS:-1}"
-SEQ_LEN="${SEQ_LEN:-16384}"
-BATCH_SIZE="${BATCH_SIZE:-1}"
 TRAIN_MODE="${TRAIN_MODE:-lm_head}"
 DTYPE="${DTYPE:-bfloat16}"
 DEVICE="${DEVICE:-xpu}"
 LR="${LR:-1e-5}"
 DATASET_SPLIT="${DATASET_SPLIT:-train}"
 DATASET_CACHE_DIR="${DATASET_CACHE_DIR:-/lus/flare/projects/datascience/seonghapark/llm_evaluation/evaluation/datasets/hf_cache}"
-DATASET_MAX_SAMPLES="${DATASET_MAX_SAMPLES:-64}"
 DATASET_STREAMING="${DATASET_STREAMING:-1}"
 VALIDATION_DATASET_PATH="${VALIDATION_DATASET_PATH:-$DATASET_PATH}"
 VALIDATION_DATASET_SPLIT="${VALIDATION_DATASET_SPLIT:-validation}"
@@ -185,6 +218,8 @@ TRAIN_ARGS=(
   "--steps" "$TRAIN_STEPS"
   "--seq-len" "$SEQ_LEN"
   "--batch-size" "$BATCH_SIZE"
+  "--micro-batch-size" "$MICRO_BATCH_SIZE"
+  "--logit-chunk-size" "$LOGIT_CHUNK_SIZE"
   "--train-mode" "$TRAIN_MODE"
   "--dtype" "$DTYPE"
   "--device" "$DEVICE"
@@ -236,6 +271,8 @@ CMD+=("--")
 CMD+=("${TRAIN_ARGS[@]}")
 
 printf 'Runtime env summary:\n'
+printf '  GEMMA_PRESET=%s TRAIN_ENTRY=%s\n' "$GEMMA_PRESET" "$TRAIN_ENTRY"
+printf '  TRAIN_STEPS=%s SEQ_LEN=%s BATCH_SIZE=%s MICRO_BATCH_SIZE=%s LOGIT_CHUNK_SIZE=%s\n' "$TRAIN_STEPS" "$SEQ_LEN" "$BATCH_SIZE" "$MICRO_BATCH_SIZE" "$LOGIT_CHUNK_SIZE"
 printf '  PYTHON_BIN=%s\n' "$PYTHON_BIN"
 printf '  MODEL_PATH=%s\n' "$MODEL_PATH"
 printf '  DATASET_PATH=%s DATASET_SPLIT=%s DATASET_STREAMING=%s\n' "$DATASET_PATH" "$DATASET_SPLIT" "$DATASET_STREAMING"

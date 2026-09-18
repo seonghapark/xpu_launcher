@@ -38,15 +38,28 @@ def _load_pg19_multinews(dataset_path: str, split: str = "train"):
     """Interleave PG19 (books) and MultiNews (news) streams.
 
     ``dataset_path`` may override as "pg19_id+multinews_id"; defaults to the
-    public mirrors used by the gemma runs.
+    canonical repos.
     """
     from datasets import interleave_datasets
 
+    def _load_streaming(repo_id: str):
+        try:
+            return load_dataset(repo_id, split=split, streaming=True)
+        except RuntimeError:
+            # Script-based repo (datasets>=4 refuses); use HF's auto-generated
+            # parquet conversion branch instead.
+            return load_dataset(
+                repo_id,
+                revision="refs/convert/parquet",
+                split=split,
+                streaming=True,
+            )
+
     pg19_id, _, multinews_id = (dataset_path or "").partition("+")
     pg19_id = pg19_id or "emozilla/pg19"
-    multinews_id = multinews_id or "Awesome075/multi_news_parquet"
-    pg19 = load_dataset(pg19_id, split=split, streaming=True)
-    multinews = load_dataset(multinews_id, split=split, streaming=True)
+    multinews_id = multinews_id or "alexfabbri/multi_news"
+    pg19 = _load_streaming(pg19_id)
+    multinews = _load_streaming(multinews_id)
     return interleave_datasets(
         [pg19, multinews], stopping_strategy="all_exhausted"
     )
@@ -79,7 +92,7 @@ DATASETS = {
         sample_processor=_process_c4_text,
     ),
     "pg19_multinews": DatasetConfig(
-        path="emozilla/pg19+Awesome075/multi_news_parquet",
+        path="emozilla/pg19+alexfabbri/multi_news",
         loader=partial(_load_pg19_multinews, split="train"),
         sample_processor=_process_pg19_multinews_text,
     ),

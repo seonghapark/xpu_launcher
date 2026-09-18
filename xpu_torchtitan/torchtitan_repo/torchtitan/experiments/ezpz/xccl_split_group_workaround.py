@@ -101,68 +101,62 @@ def maybe_install_xccl_split_group_workaround() -> None:
     original_init_one_process_group = DeviceMesh._init_one_process_group
 
     @staticmethod
-    def _patched_init_one_process_group(
-        sub_layout,
-        rank_map,
-        dim_name,
-        backend_override,
-    ):
-        """Skip the split_group branch when the parent backend can't split.
+    def _patched_init_one_process_group(*args, **kwargs):
+        """Force the ``new_group`` path whenever the parent backend is xccl.
 
-        The upstream gate at ``device_mesh.py:550-562`` only checks
-        ``bound_device_id`` / accelerator availability / matching backend
-        name. None of those rule out xccl. We layer on a check of the parent
-        backend's ``supports_splitting`` property: if it's ``False``, force
-        ``backend_override`` to a non-``None`` backend string that doesn't
-        match the accelerator backend, which routes the upstream gate to the
-        ``new_group`` fallback below it.
+        Two failure generations of the same upstream bug:
 
-        The parent's per-accelerator backend is the one ``split_group`` would
-        ultimately call ``split()`` on. If that backend reports
-        ``supports_splitting=False`` we have to take the ``new_group`` path.
+        * Older builds: ``ProcessGroupXCCL`` inherits
+          ``supportsSplitting() == False`` and ``split_group`` raises.
+        * 2026.x builds: it reports ``True`` but ``split()`` is still broken —
+          some ranks get ``NON_GROUP_MEMBER`` back, which surfaces later as a
+          bare ``AssertionError`` in ``DeviceMesh._init_process_groups``
+          (mixed None / non-None dim group names).
+
+        So we no longer trust ``supports_splitting`` on xccl at all; set
+        ``XPU_XCCL_TRUST_SPLIT=1`` to re-enable the upstream fast path once
+        a fixed xccl lands. ``*args`` keeps us compatible with upstream
+        signature changes (e.g. the added ``preserve_rank_order``).
         """
+        import os
+
         try:
             default_group = _get_default_group()
         except Exception:
-            # If no PG is initialized yet, just call through — upstream
-            # will error with the right message.
-            return original_init_one_process_group(
-                sub_layout, rank_map, dim_name, backend_override
-            )
+            return original_init_one_process_group(*args, **kwargs)
 
         accel = torch.accelerator.current_accelerator()
         if accel is None:
-            return original_init_one_process_group(
-                sub_layout, rank_map, dim_name, backend_override
-            )
+            return original_init_one_process_group(*args, **kwargs)
 
         try:
             parent_backend = default_group._get_backend(accel)
         except Exception:
-            return original_init_one_process_group(
-                sub_layout, rank_map, dim_name, backend_override
-            )
+            return original_init_one_process_group(*args, **kwargs)
 
-        if getattr(parent_backend, "supports_splitting", False):
-            # NCCL / well-behaved backend — take the upstream fast path.
-            return original_init_one_process_group(
-                sub_layout, rank_map, dim_name, backend_override
-            )
+        backend_name = ""
+        try:
+            backend_name = str(parent_backend.name())
+        except Exception:
+            backend_name = type(parent_backend).__name__
 
-        # ``supports_splitting`` is False (xccl today): steer the upstream
-        # gate's first clause to ``False`` by temporarily stripping
-        # ``bound_device_id``. We pass the original ``backend_override``
-        # through unchanged so ``new_group`` will use the default backend
-        # spec of the parent PG (the multi-backend ``cpu:gloo,xpu:xccl``
-        # string xccl runs under). ``bound_device_id`` is restored in the
-        # ``finally`` so eager-init bookkeeping is preserved for other code
-        # paths.
+        force_new_group = (
+            "xccl" in backend_name.lower()
+            and os.environ.get("XPU_XCCL_TRUST_SPLIT", "0") != "1"
+        )
+
+        if not force_new_group and getattr(
+            parent_backend, "supports_splitting", False
+        ):
+            # NCCL / trusted backend — take the upstream fast path.
+            return original_init_one_process_group(*args, **kwargs)
+
+        # Steer the upstream gate's ``bound_device_id`` clause to ``False`` so
+        # every dim takes the ``new_group`` fallback (never xccl split()).
         saved_bound_device_id = getattr(default_group, "bound_device_id", None)
         try:
             default_group.bound_device_id = None  # type: ignore[attr-defined]
-            return original_init_one_process_group(
-                sub_layout, rank_map, dim_name, backend_override
-            )
+            return original_init_one_process_group(*args, **kwargs)
         finally:
             default_group.bound_device_id = saved_bound_device_id  # type: ignore[attr-defined]
 

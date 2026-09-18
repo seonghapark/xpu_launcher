@@ -4,9 +4,9 @@ set -euo pipefail
 # TorchTitan training template on top of xpu_launch/run_train.sh
 #
 # Examples:
-#   ./run_train_torchtitan.sh single --dry-run
-#   ./run_train_torchtitan.sh multi /path/to/hosts --dry-run
-#   MODULE=llama3 CONFIG=llama3_8b HF_ASSETS_PATH=/path/hf/Llama-3.1-8B \
+#   MODEL=/path/to/hf/model ./run_train_torchtitan.sh single --dry-run
+#   MODEL=/path/to/hf/model ./run_train_torchtitan.sh multi /path/to/hosts --dry-run
+#   MODEL=/path/to/hf/Llama-3.1-8B MODULE=llama3 CONFIG=llama3_8b \
 #     DATASET_NAME=c4 DATASET_PATH=allenai/c4 LOG_DIR=/path/logs \
 #     ./run_train_torchtitan.sh multi /path/to/hosts -- --training.steps 2000
 
@@ -18,9 +18,11 @@ Usage:
                           (hostfile optional inside a PBS job: PBS_NODEFILE is used)
 
 Core env variables:
-  MODULE              (default: llama3)
-  CONFIG              (default: llama3_debugmodel)
-  HF_ASSETS_PATH      (default: ../torchtitan/tests/assets/tokenizer)
+  MODEL               REQUIRED: path to the model/tokenizer assets directory
+                      (forwarded to torchtitan as --hf_assets_path)
+  MODULE              (default: llama3; torchtitan config-registry module)
+  CONFIG              (default: llama3_debugmodel; callable in that module's config_registry.py)
+  HF_ASSETS_PATH      (optional override; default: MODEL)
   DATASET_NAME        (default: pg19_multinews — PG19+MultiNews interleaved, streaming;
                        use c4_test for the offline bundled smoke sample)
   DATASET_PATH        (optional, default: empty)
@@ -108,9 +110,20 @@ if [[ "${1:-}" == "--" ]]; then
 fi
 
 TORCHTITAN_ROOT="${TORCHTITAN_ROOT:-${SCRIPT_DIR}/torchtitan_repo}"
+# MODEL: required path to model/tokenizer assets, forwarded as --hf_assets_path
+if [[ -z "${MODEL:-}" ]]; then
+  echo "error: MODEL is required: path to the model/tokenizer assets directory" >&2
+  echo "       e.g. MODEL=${TORCHTITAN_ROOT}/tests/assets/tokenizer" >&2
+  usage
+  exit 1
+fi
+if [[ ! -d "$MODEL" ]]; then
+  echo "error: MODEL path not found: $MODEL" >&2
+  exit 1
+fi
 MODULE="${MODULE:-llama3}"
 CONFIG="${CONFIG:-llama3_debugmodel}"
-HF_ASSETS_PATH="${HF_ASSETS_PATH:-${TORCHTITAN_ROOT}/tests/assets/tokenizer}"
+HF_ASSETS_PATH="${HF_ASSETS_PATH:-${MODEL}}"
 DATASET_NAME="${DATASET_NAME:-pg19_multinews}"
 DATASET_PATH="${DATASET_PATH:-}"
 LOG_DIR="${LOG_DIR:-${TORCHTITAN_ROOT}/outputs/xpu_torchtitan_$(date +%Y%m%d_%H%M%S)}"
@@ -163,6 +176,7 @@ cd "$TORCHTITAN_ROOT"
 
 cat >&2 <<EOF
 [ARGS] mode              = ${MODE}$( [[ "$MODE" == "multi" ]] && echo " (hostfile=${HOSTFILE:-auto from PBS_NODEFILE})" )
+[ARGS] MODEL             = ${MODEL}
 [ARGS] MODULE/CONFIG     = ${MODULE} / ${CONFIG}
 [ARGS] DATASET_NAME      = ${DATASET_NAME}
 [ARGS] DATASET_PATH      = ${DATASET_PATH:-<unset>}

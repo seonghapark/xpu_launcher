@@ -942,6 +942,17 @@ def _classify_attempt(
     return _result(TerminationReason.BAD_NODE_BLIND)
 
 
+def _terminate_process(process: subprocess.Popen) -> None:
+    """SIGTERM then SIGKILL so reader threads hit EOF before shutdown."""
+    with contextlib.suppress(Exception):
+        process.terminate()
+        try:
+            process.wait(timeout=_WATCHDOG_KILL_GRACE_S)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+
+
 def _run_with_watchdog_capture(
     cmd: Sequence[str], idle_timeout_s: int
 ) -> tuple[int, str]:
@@ -956,11 +967,15 @@ def _run_with_watchdog_capture(
         )
         output: list[str] = []
         assert process.stdout is not None
-        for line in process.stdout:
-            output.append(line)
-            sys.stdout.write(line)
-            sys.stdout.flush()
-        rc = process.wait()
+        try:
+            for line in process.stdout:
+                output.append(line)
+                sys.stdout.write(line)
+                sys.stdout.flush()
+            rc = process.wait()
+        except KeyboardInterrupt:
+            _terminate_process(process)
+            raise
         return rc, "".join(output)
 
     process = subprocess.Popen(
@@ -1024,6 +1039,11 @@ def _run_with_watchdog_capture(
 
             sleep_for = min(1.0, max(0.1, idle_timeout_s - idle_for))
             time.sleep(sleep_for)
+    except KeyboardInterrupt:
+        # Kill the child so the reader thread reaches EOF; otherwise it holds
+        # the stdout buffer lock during interpreter shutdown (fatal error).
+        _terminate_process(process)
+        raise
     finally:
         reader_done.wait(timeout=2.0)
 
@@ -1108,6 +1128,21 @@ def _run_with_auto_retry(
                 excluded_hosts=sorted(excluded_hosts),
             )
             failover_profile = _detect_failover_profile(args, launcher_tokens)
+            # Rank 0 lands on the first active host; PBS_NODEFILE order can
+            # differ after spare/swap rotation, so pin the rendezvous address.
+            if allocation.active:
+                os.environ["MASTER_ADDR"] = allocation.active[0]
+            # PALS exposes rank/local-rank env but no world-size variable;
+            # the launcher knows the exact rank count, so publish it.
+            try:
+                topo = _resolve_requested_topology(
+                    args,
+                    hostfile_override=str(active_hostfile),
+                    active_hosts_override=allocation.active,
+                )
+                os.environ["WORLD_SIZE"] = str(topo.nproc)
+            except Exception:
+                pass
             _debug_log(
                 args.failover_debug,
                 (
@@ -1374,6 +1409,11 @@ def _run_with_watchdog(cmd: Sequence[str], idle_timeout_s: int) -> int:
 
             sleep_for = min(1.0, max(0.1, idle_timeout_s - idle_for))
             time.sleep(sleep_for)
+    except KeyboardInterrupt:
+        # Kill the child so the reader thread reaches EOF; otherwise it holds
+        # the stdout buffer lock during interpreter shutdown (fatal error).
+        _terminate_process(process)
+        raise
     finally:
         reader_done.wait(timeout=2.0)
 
@@ -1453,6 +1493,22 @@ def run(argv: Sequence[str] | None = None) -> int:
             args.hostfile = resolved_hostfile
 
     launcher_tokens = _build_launcher_tokens(args, scheduler=scheduler)
+    # Pin the rendezvous address to the first hostfile entry (rank 0's node)
+    if (
+        "MASTER_ADDR" not in os.environ
+        and args.hostfile
+        and os.path.isfile(args.hostfile)
+    ):
+        hosts = _read_hostfile(args.hostfile)
+        if hosts:
+            os.environ["MASTER_ADDR"] = hosts[0]
+    # PALS has no world-size env var; publish the launcher's rank count
+    if "WORLD_SIZE" not in os.environ and launcher_tokens:
+        try:
+            topo = _resolve_requested_topology(args)
+            os.environ["WORLD_SIZE"] = str(topo.nproc)
+        except Exception:
+            pass
     full_cmd = [*launcher_tokens, *command]
 
     timeout_s = args.timeout

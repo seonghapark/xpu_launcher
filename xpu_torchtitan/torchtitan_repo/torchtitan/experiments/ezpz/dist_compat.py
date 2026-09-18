@@ -61,7 +61,18 @@ def get_rank() -> int:
 def get_world_size() -> int:
     if torch.distributed.is_initialized():
         return torch.distributed.get_world_size()
-    return _env_int(_WORLD_ENVS, 1)
+    size = _env_int(_WORLD_ENVS, 0)
+    if size > 0:
+        return size
+    # PALS sets no world-size env; derive local_size * node_count
+    local_size = _env_int(("PALS_LOCAL_SIZE", "PMI_LOCAL_SIZE"), 0)
+    nodefile = os.environ.get("PBS_NODEFILE")
+    if local_size > 0 and nodefile and os.path.isfile(nodefile):
+        with open(nodefile, encoding="utf-8") as fh:
+            nodes = {line.strip() for line in fh if line.strip()}
+        if nodes:
+            return local_size * len(nodes)
+    return 1
 
 
 def get_local_rank() -> int:

@@ -24,11 +24,13 @@ The command to execute is simply taken as an argument.
 
 | Script | Role |
 |---|---|
-| `run_train.sh` | Base wrapper — finds the `xpu` binary (`PATH` → `./.venv` → `../torchtitan/.venv/bin/xpu` fallback) and assembles `xpu launch --scheduler ... -n ... --auto-retry ...` |
+| `run_train.sh` | Base wrapper — resolves how to invoke `xpu` (`$XPU_CMD` on `PATH` → `python -m cli` with `src/` prepended to `PYTHONPATH` → `./.venv/bin/xpu`) and assembles `xpu launch --scheduler ... -n ... --auto-retry ...` |
 | `xpu_torchtitan/run_train_torchtitan.sh` | TorchTitan template on top of run_train.sh — ultimately passes `python -m torchtitan.train` as the launch command (configured via MODULE/CONFIG/TORCHTITAN_ROOT env) |
 | `xpu_torchtitan/run_agpt_torchtitan_xpu.sh` | aGPT training — runs `python -m torchtitan.experiments.ezpz.train` via `xpu launch` |
 | `xpu_torchtitan/run_gemma_torchtitan_xpu.sh` | TorchTitan training wrapper for Gemma (uses a `runpy` bootstrap) |
-| `non_torchtitan_*.py` / `run_*_non_torchtitan*.sh` | Alternative path training with pure PyTorch FSDP, without torchtitan |
+| `run_gemma_non_torchtitan_xpu.sh` | Gemma training without torchtitan — run shape chosen with `GEMMA_PRESET` (`presets/gemma_smoke.env`, `presets/gemma_fsdp.env`) |
+| `start_gemma_pg19_multinews_terminal.sh` | Convenience starter for the above from inside a qsub interactive terminal (validates `PBS_NODEFILE`, builds the hostfile) |
+| `non_torchtitan_*.py` / `run_train_non_torchtitan.sh` | Alternative path training with pure PyTorch FSDP, without torchtitan |
 
 So the structure is **`xpu launch <launcher flags> -- python -m torchtitan.train <args>`**:
 the launcher (package) and the training framework (torchtitan) are decoupled
@@ -46,8 +48,9 @@ graph LR
 
 ## 2. How is torchtitan wrapped?
 
-In the torchtitan clone (`/lus/flare/projects/datascience/seonghapark/torchtitan`,
-the ezpz branch of the saforem2 fork), **raw and wrapped paths coexist**.
+In the vendored torchtitan clone (`xpu_torchtitan/torchtitan_repo/`, the ezpz
+branch of the saforem2 fork — this is the `TORCHTITAN_ROOT` default),
+**raw and wrapped paths coexist**.
 
 ### 2.1 Raw torchtitan (`python -m torchtitan.train`)
 
@@ -78,8 +81,12 @@ It merely lives inside the torchtitan repo; effectively a separate trainer.
 
 ### 2.4 Paths that skip torchtitan
 
-xpu_launcher's `non_torchtitan_*.py` (`non_torchtitan_gemma_train_FSDP.py`, etc.) —
-pure PyTorch FSDP without torchtitan.
+xpu_launcher's `non_torchtitan_*.py` (`non_torchtitan_gemma_train.py`,
+`non_torchtitan_gemma_train_FSDP.py`, `non_torchtitan_agpt_train_FSDP.py`) —
+pure PyTorch FSDP without torchtitan. For Gemma the two trainers are driven by
+one wrapper, `run_gemma_non_torchtitan_xpu.sh`, which picks between them via
+`GEMMA_PRESET`: `smoke` (1 step on the plain trainer, for checking the launch
+path) or `fsdp` (the full 158000-step FSDP2 run).
 
 ### Overall structure
 

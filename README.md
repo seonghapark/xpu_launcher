@@ -1,32 +1,77 @@
 # xpu-launch
 
-Small Python package + CLI that provides:
+Standalone launcher CLI + Python library for single/multi-node jobs on
+PBS/SLURM systems (Aurora-first). No `ezpz` dependency.
 
-- `xpu launch ...`
-- `xpu doctor`
-- `xpu submit`
-- `xpu dist ...`
-- `xpu integrations`
+Subcommands: `xpu launch` · `xpu doctor` · `xpu submit` · `xpu dist` · `xpu integrations`
 
-It is standalone and has no `ezpz` dependency or integration.
+## Contents
 
-It accepts common launcher-style flags for easy migration from other tools, including:
+- [Quick start](#quick-start)
+- [`xpu launch` reference](#xpu-launch-reference)
+- [Auto-retry and failover](#auto-retry-and-failover)
+- [Accelerator backends (XPU / CUDA / ROCm)](#accelerator-backends-xpu--cuda--rocm)
+- [Python library](#python-library)
+- [Package layout](#package-layout)
+- [Tests](#tests)
+- [CLI examples](#cli-examples)
+- [Training templates](#training-templates)
+- [Subsystem notes](#subsystem-notes)
 
-- `-n` / `--nproc`
-- `-ppn` / `--nproc_per_node`
-- `-nh` / `--nnodes`
-- `--hostfile`
-- `--scheduler {auto,pbs,slurm,none}`
-- `--cpu-bind`
-- `--timeout`, `--retries`, `--auto-retry`
-- `--failover-profile {auto,aurora,slurm,generic}`
-- `--failover-debug`
-- `--host-ip-map /path/map.json`
+## Quick start
 
-`--auto-retry` now performs host failover with active/spare rotation.
-Provide a hostfile explicitly with `--hostfile` (or via `HOSTFILE`/`PBS_NODEFILE`).
+```bash
+cd /lus/flare/projects/datascience/seonghapark/xpu_launcher
+pip install -e .
 
-Scheduler and topology are now deeply integrated:
+# run a command under the detected scheduler/launcher
+xpu launch -- python train.py --epochs 10
+
+# explicit topology + dry run
+xpu launch -n 8 -ppn 4 --dry-run python train.py
+
+# multi-node with host failover
+xpu launch --auto-retry --hostfile hosts.txt --nhosts 4 --spare-nodes auto -- python train.py
+```
+
+For TorchTitan / generic training wrappers see
+[Training templates](#training-templates).
+
+## `xpu launch` reference
+
+### Flags
+
+| Flag | Meaning |
+|---|---|
+| `-n` / `--nproc` | total ranks |
+| `-ppn` / `--nproc_per_node` | ranks per node |
+| `-nh` / `--nnodes` | node count |
+| `--hostfile PATH` | host list (else `HOSTFILE` / `PBS_NODEFILE`) |
+| `--scheduler {auto,pbs,slurm,none}` | scheduler hint |
+| `--accelerator {auto,xpu,cuda,rocm,none}` | accelerator backend (default `auto`) |
+| `--cpu-bind ...` | passed through to the launcher |
+| `--timeout N` | idle-watchdog seconds |
+| `--retries N` | simple retry with backoff |
+| `--auto-retry` | retry + bad-node failover ([details](#auto-retry-and-failover)) |
+| `--spare-nodes N\|auto` | spare pool size for failover |
+| `--failover-profile {auto,aurora,slurm,generic}` | crash-pattern profile |
+| `--failover-debug` | print classifier matches per retry |
+| `--host-ip-map FILE` | manual IP→host mapping (skips DNS) |
+| `--dry-run` | print resolved command and exit |
+
+### Launcher prefix resolution
+
+`xpu launch` prepends a launcher prefix using this order; if none applies it
+runs the command directly:
+
+1. `--launcher "..."`
+2. `DIST_LAUNCH`
+3. `XPU_LAUNCHER`
+4. `LAUNCH_CMD`
+5. `LAUNCH`
+6. auto-detect (`mpiexec`/`mpirun`/`srun`) when size flags are provided
+
+### Scheduler & topology
 
 - Scheduler detection (`auto`) uses `XPU_SCHEDULER`, then PBS/SLURM env,
 	then scheduler binaries (`qsub`/`sbatch`).
@@ -43,6 +88,12 @@ Scheduler and topology are now deeply integrated:
 	`qstat`-based user-job scan and `/var/spool/pbs/aux` nodefile lookup.
 - SLURM active job fallback: use `SLURM_JOB_ID` fast path,
 	then running-job discovery (`sacct`/`squeue`) and `scontrol show job` nodelist lookup.
+
+## Auto-retry and failover
+
+`--auto-retry` performs host failover with active/spare rotation. Provide a
+hostfile with `--hostfile` (or via `HOSTFILE`/`PBS_NODEFILE`; inside a PBS job
+it is derived automatically).
 
 Classification behavior:
 
@@ -125,16 +176,9 @@ CLI integration:
 - `xpu doctor` reports per-backend availability, device count, SMI tool, and
   an API-parity check under `xpu.accelerator`.
 
-## Install
+## Python library
 
-```bash
-cd /lus/flare/projects/datascience/seonghapark/xpu_launch
-pip install -e .
-```
-
-## Python Library Usage
-
-You can use `xpu_launch` as a Python library after `pip install`.
+Usable as a library after `pip install -e .`:
 
 ```python
 from xpu_launch import __version__
@@ -152,7 +196,7 @@ xpu --help
 python -m xpu_launch --help
 ```
 
-## Package Layout
+## Package layout
 
 The implementation modules are under `src/cli`, and the installable Python
 library namespace is `src/xpu_launch`.
@@ -170,7 +214,7 @@ library namespace is `src/xpu_launch`.
 
 ## Tests
 
-Added parity-oriented tests under `tests/`:
+Parity-oriented tests under `tests/`:
 
 - `test_launch_snapshots.py`: dry-run snapshots for scheduler/topology launch assembly,
   and auto-retry `srun --exclude` reinjection behavior.
@@ -179,7 +223,7 @@ Added parity-oriented tests under `tests/`:
 - `test_failover_models.py`: NodeAllocation/BadNodeRecord/provenance persistence checks.
 - `test_subsystems_cli.py`: top-level subsystem command registration and doctor output checks.
 
-## Usage
+## CLI examples
 
 ```bash
 xpu launch -- python train.py --epochs 10
@@ -191,42 +235,45 @@ xpu dist validate --hostfile /path/to/hosts --nproc 8 --nproc-per-node 4
 xpu submit --hostfile /path/to/hosts --nproc 8 --nproc-per-node 4 --command "python train.py" --script-path ./job.sh --no-run
 ```
 
-## Training Templates
+## Training templates
 
-Two executable helper scripts are included in this repo root:
+Two executable helper scripts are included in this repo:
 
 - `xpu_torchtitan/run_train_torchtitan.sh`: `xpu launch` wrapper for real TorchTitan training.
 - `run_train_non_torchtitan.sh`: `xpu launch` wrapper for generic Python training scripts.
 
 Both support single-node and multi-node modes.
 
-### TorchTitan Template
+### TorchTitan template
 
 ```bash
-cd /lus/flare/projects/datascience/seonghapark/xpu_launch
+cd /lus/flare/projects/datascience/seonghapark/xpu_launcher
 
 # single node
-./xpu_torchtitan/run_train_torchtitan.sh single --dry-run
+MODEL=/path/to/hf/model ./xpu_torchtitan/run_train_torchtitan.sh single --dry-run
 
-# multi node
-./xpu_torchtitan/run_train_torchtitan.sh multi /path/to/hosts --dry-run
+# multi node (hostfile optional inside a PBS job: PBS_NODEFILE is used)
+MODEL=/path/to/hf/model ./xpu_torchtitan/run_train_torchtitan.sh multi --dry-run
+MODEL=/path/to/hf/model ./xpu_torchtitan/run_train_torchtitan.sh multi /path/to/hosts --dry-run
 
 # real run-style example
+MODEL=/path/to/hf/Llama-3.1-8B \
 MODULE=llama3 \
 CONFIG=llama3_8b \
-HF_ASSETS_PATH=/path/to/hf/Llama-3.1-8B \
 DATASET_NAME=c4 \
 DATASET_PATH=allenai/c4 \
 LOG_DIR=/path/to/logs/tt_run1 \
 CKPT_FOLDER=checkpoint \
-./xpu_torchtitan/run_train_torchtitan.sh multi /path/to/hosts -- --training.steps 5000
+./xpu_torchtitan/run_train_torchtitan.sh multi -- --training.steps 5000
 ```
 
 Key env vars for `xpu_torchtitan/run_train_torchtitan.sh`:
 
-- `MODULE` (default: `llama3`)
-- `CONFIG` (default: `llama3_debugmodel`)
-- `HF_ASSETS_PATH` (default: `xpu_torchtitan/torchtitan_repo/tests/assets/tokenizer`)
+- `MODEL` **(required)**: path to the model/tokenizer assets directory
+  (forwarded to torchtitan as `--hf_assets_path`)
+- `MODULE` (default: `llama3`; torchtitan config-registry module)
+- `CONFIG` (default: `llama3_debugmodel`; callable in that module's `config_registry.py`)
+- `HF_ASSETS_PATH` (optional override; default: `MODEL`)
 - `DATASET_NAME` (default: `pg19_multinews` — PG19+MultiNews interleaved, HF streaming; `c4_test` = offline bundled sample)
 - `DATASET_PATH` (optional)
 - `LOG_DIR` (default: `xpu_torchtitan/torchtitan_repo/outputs/xpu_torchtitan_<timestamp>`)
@@ -262,15 +309,14 @@ def mymodel_debug() -> Trainer.Config:
     return cfg
 ```
 
-Then run with `MODULE=mymodel CONFIG=mymodel_debug`. Existing examples:
+Then run with `MODULE=mymodel CONFIG=mymodel_debug`. Existing example:
 `torchtitan/models/llama3/config_registry.py` (used by the defaults
-`MODULE=llama3 CONFIG=llama3_debugmodel`) and
-`torchtitan/experiments/ezpz/agpt/config_registry.py` (`ezpz_agpt_2b` etc.).
+`MODULE=llama3 CONFIG=llama3_debugmodel`).
 
-### Non-TorchTitan Template
+### Non-TorchTitan template
 
 ```bash
-cd /lus/flare/projects/datascience/seonghapark/xpu_launch
+cd /lus/flare/projects/datascience/seonghapark/xpu_launcher
 
 # single node
 ./run_train_non_torchtitan.sh single --dry-run -- --epochs 1
@@ -298,7 +344,7 @@ Both templates forward launch-related environment controls to `run_train.sh`:
 - `XPU_CMD`, `SCHEDULER`, `NPROC_PER_NODE`, `NNODES`, `NPROC`
 - `AUTO_RETRY`, `SPARE_NODES`, `FAILOVER_PROFILE`, `HOST_IP_MAP`
 
-## Subsystem Notes
+## Subsystem notes
 
 - `xpu doctor` now emits structured checks for scheduler env, launcher availability,
 	hostfile resolution, and topology inference.
@@ -317,18 +363,6 @@ Both templates forward launch-related environment controls to `run_train.sh`:
 	Polaris -> `filesystems=home:eagle`, `place=scatter`.
 	You can override with `--queue`, `--account`, `--filesystems`.
 
-## Standalone Launch Prefix
-
-`xpu launch` prepends a launcher command to your target command using this order:
-
-1. `--launcher "..."`
-2. `DIST_LAUNCH`
-3. `XPU_LAUNCHER`
-4. `LAUNCH_CMD`
-5. `LAUNCH`
-
-If none are set, it runs the command directly.
-
 Examples:
 
 ```bash
@@ -337,4 +371,3 @@ xpu launch -- python train.py --epochs 10
 
 xpu launch --launcher 'srun -N2 -n16 -u' -- python train.py
 ```
-# xpu_launch
