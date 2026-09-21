@@ -1,5 +1,3 @@
-import ezpz
-import ezpz.distributed
 import json
 import os
 from dataclasses import is_dataclass
@@ -9,41 +7,38 @@ from torchtitan.components.checkpoint import CheckpointManager
 from torchtitan.components.loss import ChunkedLossWrapper, CrossEntropyLoss
 from torchtitan.components.lr_scheduler import LRSchedulersContainer
 from torchtitan.components.metrics import MetricsProcessor
-from torchtitan.components.optimizer import default_adamw, OptimizersContainer
-from torchtitan.experiments.ezpz.validator import EzpzValidator
+from torchtitan.components.optimizer import default_adamw
+from torchtitan.components.tokenizer import HuggingFaceTokenizer
+from torchtitan.components.validate import Validator
 from torchtitan.config import CommConfig, TrainingConfig
 from torchtitan.distributed.activation_checkpoint import FullAC
 from torchtitan.config.configs import CompileConfig
-from torchtitan.experiments.ezpz.blendcorpus.blendcorpus_builder import (
-    BlendCorpusDataLoader,
-)
-from torchtitan.experiments.ezpz.blendcorpus.build_tokenizer import EZPZTokenizer
-from torchtitan.experiments.torchft.config.job_config import FaultTolerance
-from torchtitan.experiments.ezpz.trainer import FaultTolerantTrainer
+from torchtitan.hf_datasets.text_datasets import HuggingFaceTextDataLoader
+from torchtitan.trainer import Trainer
 
 from . import model_registry
 
 TT_CONFIG_JSON_ENV = "TT_CONFIG_JSON"
 
 
-def agpt_debugmodel() -> FaultTolerantTrainer.Config:
+def agpt_debugmodel() -> Trainer.Config:
     return ezpz_agpt_debugmodel()
 
 
-def agpt_2b() -> FaultTolerantTrainer.Config:
+def agpt_2b() -> Trainer.Config:
     return ezpz_agpt_2b()
 
 
-def agpt_2b_hf() -> FaultTolerantTrainer.Config:
+def agpt_2b_hf() -> Trainer.Config:
     cfg = ezpz_agpt_2b()
     cfg.dataloader.dataset_path = None
     return cfg
 
 
 def _set_rope_backend(
-    cfg: FaultTolerantTrainer.Config,
+    cfg: Trainer.Config,
     backend: Literal["complex", "cos_sin"],
-) -> FaultTolerantTrainer.Config:
+) -> Trainer.Config:
     """Switch every RoPE callsite in the model spec to ``backend``.
 
     PR #3458 (RoPE refactor) split ``RoPE.Config`` into
@@ -70,7 +65,7 @@ def _set_rope_backend(
     return cfg
 
 
-def agpt_2b_real() -> FaultTolerantTrainer.Config:
+def agpt_2b_real() -> Trainer.Config:
     """agpt_2b with real-valued (cos_sin) RoPE instead of complex.
 
     The default `RoPE.Config(backend="complex")` uses torch.complex64
@@ -87,25 +82,25 @@ def agpt_2b_real() -> FaultTolerantTrainer.Config:
     return _set_rope_backend(ezpz_agpt_2b(), "cos_sin")
 
 
-def agpt_2b_flex_attn() -> FaultTolerantTrainer.Config:
+def agpt_2b_flex_attn() -> Trainer.Config:
     return ezpz_agpt_2b_flex_attn()
 
 
-def agpt_7b() -> FaultTolerantTrainer.Config:
+def agpt_7b() -> Trainer.Config:
     return ezpz_agpt_7b()
 
 
-def agpt_7b_hf() -> FaultTolerantTrainer.Config:
+def agpt_7b_hf() -> Trainer.Config:
     cfg = ezpz_agpt_7b()
     cfg.dataloader.dataset_path = None
     return cfg
 
 
-def ezpz_agpt_8b() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_8b() -> Trainer.Config:
     return _base_config("8B")
 
 
-def agpt_8b() -> FaultTolerantTrainer.Config:
+def agpt_8b() -> Trainer.Config:
     return ezpz_agpt_8b()
 
 
@@ -128,7 +123,7 @@ def agpt(
     checkpoint_interval: int = 50,
     hf_assets_path: str = "./assets/hf/gemma-7b",
     dataset_path: str | None = None,
-) -> FaultTolerantTrainer.Config:
+) -> Trainer.Config:
     cfg = _base_config(flavor)
     cfg.hf_assets_path = hf_assets_path
     cfg.debug.print_config = True
@@ -141,9 +136,7 @@ def agpt(
     )
     cfg.training.seq_len = seq_len
     cfg.training.dtype = dtype
-    cfg.dataloader.dataset = "blendcorpus"
-    if dataset_path is None:
-        dataset_path = f"torchtitan/experiments/ezpz/data-lists/{ezpz.distributed.get_machine().lower()}/books.txt"
+    cfg.dataloader.dataset = "pg19_multinews"
     cfg.dataloader.dataset_path = dataset_path
     # Validator reads from the same blendcorpus corpus, but it pulls from
     # the validation split (see BlendCorpusDataLoader.Config.serve_validation).
@@ -158,7 +151,7 @@ def agpt(
     # builder), which is the operative fix; this copy is defense-in-depth for
     # interactive / non-script callers. Either way the validation-split index
     # must be prewarmed (prewarm_blendcorpus_cache.sh builds it).
-    if isinstance(cfg.validator.dataloader, BlendCorpusDataLoader.Config):
+    if isinstance(cfg.validator.dataloader, HuggingFaceTextDataLoader.Config):
         cfg.validator.dataloader.dataset_path = dataset_path
         cfg.validator.dataloader.data_cache_path = cfg.dataloader.data_cache_path
     cfg.metrics.log_freq = 1
@@ -172,11 +165,11 @@ def agpt(
     return cfg
 
 
-def _base_config(flavor: str) -> FaultTolerantTrainer.Config:
-    return FaultTolerantTrainer.Config(
+def _base_config(flavor: str) -> Trainer.Config:
+    return Trainer.Config(
         hf_assets_path="./tests/assets/hf/gemma-7b",
         model_spec=model_registry(flavor),
-        tokenizer=EZPZTokenizer.Config(backend="hf"),
+        tokenizer=HuggingFaceTokenizer.Config(),
         loss=CrossEntropyLoss.Config(),
         optimizer=default_adamw(lr=8e-4),
         lr_scheduler=LRSchedulersContainer.Config(
@@ -190,7 +183,7 @@ def _base_config(flavor: str) -> FaultTolerantTrainer.Config:
             seq_len=2048,
             steps=10000,
         ),
-        dataloader=BlendCorpusDataLoader.Config(dataset="c4_test"),
+        dataloader=HuggingFaceTextDataLoader.Config(dataset="c4_test"),
         metrics=MetricsProcessor.Config(log_freq=10),
         checkpoint=CheckpointManager.Config(
             interval=500,
@@ -198,18 +191,6 @@ def _base_config(flavor: str) -> FaultTolerantTrainer.Config:
         ),
         activation_checkpoint=FullAC.Config(),
         comm=CommConfig(train_timeout_seconds=100),
-        fault_tolerance=FaultTolerance(enable=False),
-        # Walltime-aware checkpointing: guarantee a save before the PBS walltime
-        # runs out (otherwise a short job can save nothing -- see the train loop
-        # in trainer.py). The failover submit scripts export
-        # $WALLTIME_DEADLINE_EPOCH (absolute job_start+walltime timestamp,
-        # survives failover retries -- PREFERRED) and $WALLTIME_SECONDS (relative
-        # fallback). 0/unset disables it (interactive runs, non-PBS). Overridable
-        # on the CLI via --walltime-deadline-epoch / --walltime-seconds.
-        walltime_deadline_epoch=int(
-            os.environ.get("WALLTIME_DEADLINE_EPOCH", "0") or "0"
-        ),
-        walltime_seconds=int(os.environ.get("WALLTIME_SECONDS", "0") or "0"),
         # Validator runs on the blendcorpus validation split (5% of the
         # corpus by default — see BlendCorpusDataLoader.Config.split). The
         # validator builds its own dataloader from this Config every time
@@ -219,28 +200,27 @@ def _base_config(flavor: str) -> FaultTolerantTrainer.Config:
         # --validator.enable on the CLI.
         # Uses EzpzValidator (subclass of Validator) which fixes loss
         # reporting on TP > 1 — see torchtitan/experiments/ezpz/validator.py.
-        validator=EzpzValidator.Config(
+        validator=Validator.Config(
             enable=False,
             freq=200,
             steps=10,
-            dataloader=BlendCorpusDataLoader.Config(
-                dataset="blendcorpus",
-                serve_validation=True,
+            dataloader=HuggingFaceTextDataLoader.Config(
+                dataset="c4_validation",
                 infinite=False,
             ),
         ),
     )
 
 
-def ezpz_agpt_debugmodel() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_debugmodel() -> Trainer.Config:
     return agpt("debugmodel", local_batch_size=2)
 
 
-def ezpz_agpt_2b() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_2b() -> Trainer.Config:
     return agpt("2b", activation_checkpoint_mode="none")
 
 
-def agpt_2b_chunkedce() -> FaultTolerantTrainer.Config:
+def agpt_2b_chunkedce() -> Trainer.Config:
     """agpt_2b with ChunkedLossWrapper to keep peak memory low.
 
     With vocab=256128 the unchunked logits are ~16 GB at LBS=2 / seq=8192,
@@ -253,19 +233,19 @@ def agpt_2b_chunkedce() -> FaultTolerantTrainer.Config:
     return cfg
 
 
-def ezpz_agpt_2b_flex_attn() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_2b_flex_attn() -> Trainer.Config:
     return agpt("2b_flex_attn", local_batch_size=2)
 
 
-def ezpz_agpt_20b_flex_attn() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_20b_flex_attn() -> Trainer.Config:
     return agpt("20b_flex_attn")
 
 
-def agpt_20b_flex_attn() -> FaultTolerantTrainer.Config:
+def agpt_20b_flex_attn() -> Trainer.Config:
     return agpt("20b_flex_attn")
 
 
-def ezpz_agpt_7b() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_7b() -> Trainer.Config:
     return agpt("7b", local_batch_size=2, seq_len=4096, hf_assets_path="./assets/hf/llama-2-7b-hf")
 
 
@@ -311,194 +291,139 @@ def _apply_config_overrides(
         setattr(target, key, value)
 
 
-def _config_from_json(flavor: str) -> FaultTolerantTrainer.Config:
+def _config_from_json(flavor: str) -> Trainer.Config:
     cfg = _base_config(flavor)
     _apply_config_overrides(cfg, _load_json_overrides())
     return cfg
 
 
-def ezpz_agpt_debugmodel_from_json() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_debugmodel_from_json() -> Trainer.Config:
     return _config_from_json("debugmodel")
 
 
-def ezpz_agpt_2b_from_json() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_2b_from_json() -> Trainer.Config:
     return _config_from_json("2b")
 
 
-def ezpz_agpt_7b_from_json() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_7b_from_json() -> Trainer.Config:
     return _config_from_json("7b")
 
 
-def ezpz_agpt_8b_from_json() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_8b_from_json() -> Trainer.Config:
     return _config_from_json("8B")
 
 
-def ezpz_agpt_blendcorpus_debugmodel() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_blendcorpus_debugmodel() -> Trainer.Config:
     cfg = _base_config("debugmodel")
-    cfg.dataloader.dataset = "blendcorpus"
-    if isinstance(cfg.tokenizer, EZPZTokenizer.Config):
-        cfg.tokenizer.backend = "sptoken"
+    cfg.dataloader.dataset = "pg19_multinews"
     return cfg
 
 
-def ezpz_agpt_20b() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_20b() -> Trainer.Config:
     return agpt("20b")
 
 
-def agpt_20b() -> FaultTolerantTrainer.Config:
+def agpt_20b() -> Trainer.Config:
     return agpt("20b")
 
 
-def agpt_20b_chunkedce() -> FaultTolerantTrainer.Config:
+def agpt_20b_chunkedce() -> Trainer.Config:
     """agpt_20b with ChunkedLossWrapper. See agpt_2b_chunkedce for rationale."""
     cfg = ezpz_agpt_20b()
     cfg.loss = ChunkedLossWrapper.Config(num_chunks=8)
     return cfg
 
 
-def agpt_20b_real() -> FaultTolerantTrainer.Config:
+def agpt_20b_real() -> Trainer.Config:
     """agpt_20b with real-valued (cos_sin) RoPE. See agpt_2b_real."""
     return _set_rope_backend(ezpz_agpt_20b(), "cos_sin")
 
 
-def ezpz_agpt_50b() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_50b() -> Trainer.Config:
     return agpt("50b")
 
 
-def agpt_50b() -> FaultTolerantTrainer.Config:
+def agpt_50b() -> Trainer.Config:
     return agpt("50b")
 
 
-def ezpz_agpt_50b_wide() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_50b_wide() -> Trainer.Config:
     return agpt("50B_wide", tensor_parallel_degree=2)
 
 
-def agpt_50b_wide() -> FaultTolerantTrainer.Config:
+def agpt_50b_wide() -> Trainer.Config:
     return agpt("50B_wide", tensor_parallel_degree=2)
 
 
-def ezpz_agpt_70b_wide() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_70b_wide() -> Trainer.Config:
     return agpt("70B_wide", tensor_parallel_degree=2)
 
 
-def agpt_70b_wide() -> FaultTolerantTrainer.Config:
+def agpt_70b_wide() -> Trainer.Config:
     return agpt("70B_wide", tensor_parallel_degree=2)
 
 
-def ezpz_agpt_80b() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_80b() -> Trainer.Config:
     return agpt("80B", tensor_parallel_degree=2)
 
 
-def agpt_80b() -> FaultTolerantTrainer.Config:
+def agpt_80b() -> Trainer.Config:
     return agpt("80B", tensor_parallel_degree=2)
 
 
-def agpt_80b_chunkedce() -> FaultTolerantTrainer.Config:
+def agpt_80b_chunkedce() -> Trainer.Config:
     """agpt_80b with ChunkedLossWrapper. See agpt_2b_chunkedce for rationale."""
     cfg = ezpz_agpt_80b()
     cfg.loss = ChunkedLossWrapper.Config(num_chunks=8)
     return cfg
 
 
-def agpt_80b_real() -> FaultTolerantTrainer.Config:
+def agpt_80b_real() -> Trainer.Config:
     """agpt_80b with real-valued (cos_sin) RoPE. See agpt_2b_real."""
     return _set_rope_backend(ezpz_agpt_80b(), "cos_sin")
 
 
-def ezpz_agpt_80b_alt() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_80b_alt() -> Trainer.Config:
     return agpt("80B_alt", tensor_parallel_degree=2)
 
 
-def agpt_80b_alt() -> FaultTolerantTrainer.Config:
+def agpt_80b_alt() -> Trainer.Config:
     return agpt("80B_alt", tensor_parallel_degree=2)
 
 
-def ezpz_agpt_80b_wide() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_80b_wide() -> Trainer.Config:
     return agpt("80B_wide", tensor_parallel_degree=2)
 
 
-def agpt_80b_wide() -> FaultTolerantTrainer.Config:
+def agpt_80b_wide() -> Trainer.Config:
     return agpt("80B_wide", tensor_parallel_degree=2)
 
 
-def ezpz_agpt_80b_deep() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_80b_deep() -> Trainer.Config:
     return agpt("80B_deep", tensor_parallel_degree=2)
 
 
-def agpt_80b_deep() -> FaultTolerantTrainer.Config:
+def agpt_80b_deep() -> Trainer.Config:
     return agpt("80B_deep", tensor_parallel_degree=2)
 
 
-def ezpz_agpt_80b_deep_alt() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_80b_deep_alt() -> Trainer.Config:
     return agpt("80B_deep_alt", tensor_parallel_degree=2)
 
 
-def agpt_80b_deep_alt() -> FaultTolerantTrainer.Config:
+def agpt_80b_deep_alt() -> Trainer.Config:
     return agpt("80B_deep_alt", tensor_parallel_degree=2)
 
 
-def ezpz_agpt_80b_from_json() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_80b_from_json() -> Trainer.Config:
     return _config_from_json("80B")
 
 
-def ezpz_agpt_80b_wide_from_json() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_80b_wide_from_json() -> Trainer.Config:
     return _config_from_json("80B_wide")
 
 
-def ezpz_agpt_80b_deep_from_json() -> FaultTolerantTrainer.Config:
+def ezpz_agpt_80b_deep_from_json() -> Trainer.Config:
     return _config_from_json("80B_deep")
 
 
-# Competition speedrun configs — makes them discoverable via --config
-from torchtitan.experiments.ezpz.competition.configs import (  # noqa: E402, F401
-    speedrun_2b_adamw,
-    speedrun_2b_adamw_cosine,
-    speedrun_2b_adamw_fast_warmup,
-    speedrun_2b_adamw_high_lr,
-    speedrun_2b_adamw_qknorm,
-    speedrun_2b_adamw_short_decay,
-    speedrun_2b_mano,
-    speedrun_2b_mano_1e3,
-    speedrun_2b_mano_cosine,
-    speedrun_2b_mano_high_lr,
-    speedrun_2b_mano_qknorm,
-    speedrun_2b_muon,
-    speedrun_2b_muon_aggressive,
-    speedrun_2b_muon_cosine,
-    speedrun_2b_muon_fast_warmup,
-    speedrun_2b_muon_qknorm,
-    speedrun_2b_muon_short_decay,
-    speedrun_2b_sophiag,
-    speedrun_2b_spam,
-    speedrun_2b_torchmuon,
-    speedrun_2b_torchmuon_cosine,
-)
-from torchtitan.experiments.ezpz.competition.configs import (  # noqa: E402, F401
-    full_2b_adamw,
-    full_2b_adamw_qknorm,
-    full_2b_mano,
-    full_2b_mano_qknorm,
-    full_2b_muon,
-    r4_adamw,
-    r4_adamw_higher_lr,
-    r4_adamw_qknorm,
-    r4_adamw_qknorm_softcap,
-    r4_adamw_softcap,
-    r4_mano,
-    r4_mano_higher_lr,
-    r4_mano_qknorm,
-    r5_adamw_constant_lr,
-    r5_mano_constant_lr,
-    r5_mano_lr1e3,
-    r5_mano_lr2e3,
-    r5_mano_lr3e4,
-    r5_mano_lr6e4,
-    r5_schedulefree,
-    smoke_2b_50steps,
-    smoke_2b_async_ckpt,
-    smoke_2b_async_ckpt_pinned,
-    speedrun_2b_kitchen_sink,
-    speedrun_2b_mano_kitchen_sink,
-    speedrun_2b_relu2,
-    speedrun_2b_softcap,
-)

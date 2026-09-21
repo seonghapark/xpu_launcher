@@ -13,7 +13,7 @@
 #       bash torchtitan/experiments/ezpz/scripts/run_lr_finder_sweep.sh
 #
 # Environment variables:
-#   LRF_MODULE     — module to use (default: "ezpz.agpt")
+#   LRF_MODULE     — module to use (default: "agpt")
 #   LRF_MODELS     — space-separated model flavors (default: "2b 20b")
 #   LRF_OPTIMIZERS — space-separated optimizers (default: "adamw muon sophiag")
 #   LRF_STEPS      — training.steps (finder uses 10%, default: 1000)
@@ -30,7 +30,7 @@ set -o pipefail
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
-LRF_MODULE="${LRF_MODULE:-ezpz.agpt}"
+LRF_MODULE="${LRF_MODULE:-agpt}"
 LRF_MODELS="${LRF_MODELS:-2b 20b}"
 LRF_OPTIMIZERS="${LRF_OPTIMIZERS:-adamw muon sophiag}"
 LRF_STEPS="${LRF_STEPS:-1000}"
@@ -42,7 +42,7 @@ LRF_WARMUP="${LRF_WARMUP:-0.0}"
 LRF_SMOOTH="${LRF_SMOOTH:-0.05}"
 LRF_GAS="${LRF_GAS:-1}"
 
-# Derive config prefix from module name (ezpz.agpt -> agpt, ezpz.moe -> moe)
+# Derive config prefix from module name (agpt -> agpt, ezpz.moe -> moe)
 CONFIG_PREFIX="${LRF_MODULE##*.}_"
 
 # ---------------------------------------------------------------------------

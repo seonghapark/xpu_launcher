@@ -18,8 +18,9 @@ Usage:
                           (hostfile optional inside a PBS job: PBS_NODEFILE is used)
 
 Core env variables:
-  MODEL               REQUIRED: path to the model/tokenizer assets directory
+  MODEL               Path to the model/tokenizer assets directory
                       (forwarded to torchtitan as --hf_assets_path)
+  MODEL_PATH          Compatibility alias for MODEL (MODEL takes precedence)
   MODULE              (default: llama3; torchtitan config-registry module)
   CONFIG              (default: llama3_debugmodel; callable in that module's config_registry.py)
   HF_ASSETS_PATH      (optional override; default: MODEL)
@@ -111,8 +112,9 @@ fi
 
 TORCHTITAN_ROOT="${TORCHTITAN_ROOT:-${SCRIPT_DIR}/torchtitan_repo}"
 # MODEL: required path to model/tokenizer assets, forwarded as --hf_assets_path
+MODEL="${MODEL:-${MODEL_PATH:-}}"
 if [[ -z "${MODEL:-}" ]]; then
-  echo "error: MODEL is required: path to the model/tokenizer assets directory" >&2
+  echo "error: MODEL (or MODEL_PATH) is required: path to the model/tokenizer assets directory" >&2
   echo "       e.g. MODEL=${TORCHTITAN_ROOT}/tests/assets/tokenizer" >&2
   usage
   exit 1
@@ -121,6 +123,7 @@ if [[ ! -d "$MODEL" ]]; then
   echo "error: MODEL path not found: $MODEL" >&2
   exit 1
 fi
+MODEL="$(realpath "$MODEL")"
 MODULE="${MODULE:-llama3}"
 CONFIG="${CONFIG:-llama3_debugmodel}"
 HF_ASSETS_PATH="${HF_ASSETS_PATH:-${MODEL}}"

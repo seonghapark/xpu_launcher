@@ -1891,7 +1891,7 @@ No baseline re-check needed.
 - `9732db4a` — [ft] Forward attn_backend to llama3 config functions
   (#3182). 2-line change to `experiments/ft/llama3/__init__.py` —
   adds `attn_backend="sdpa"` parameter to that registry. We don't use
-  `ft.llama3` (we have our own `ezpz.agpt.model_registry`).
+  `ft.llama3` (we have our own `agpt.model_registry`).
 
 **Impact on ezpz:** None. All three commits scoped to graph_trainer,
 linter cleanups, or ft.llama3 (which we don't use).

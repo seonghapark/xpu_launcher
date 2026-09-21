@@ -8,7 +8,7 @@ Usage:
 
     # Custom data dir:
     python3 torchtitan/experiments/ezpz/utils/plot_lr_finder.py \
-        --data-dir outputs/lr_finder/ezpz/ezpz.agpt
+        --data-dir outputs/lr_finder/ezpz/agpt
 
     # Custom output dir:
     python3 torchtitan/experiments/ezpz/utils/plot_lr_finder.py \
@@ -321,7 +321,7 @@ def main() -> None:
     parser.add_argument(
         "--data-dir",
         type=Path,
-        default=Path("outputs/lr_finder/ezpz/ezpz.agpt"),
+        default=Path("outputs/lr_finder/ezpz/agpt"),
         help="Directory containing model/optimizer/lr_finder_data.csv",
     )
     parser.add_argument(

@@ -71,7 +71,7 @@ log_message INFO "Log: ${log}"
 log_message INFO "=========================================="
 
 ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-    --module ezpz.agpt \
+    --module agpt \
     --config agpt_80b \
     --training.steps 20 \
     --checkpoint.no_enable \

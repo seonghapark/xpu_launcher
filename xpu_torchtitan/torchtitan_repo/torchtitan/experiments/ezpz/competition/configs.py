@@ -11,11 +11,11 @@
 #
 # Usage:
 #   ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-#       --module ezpz.agpt --config speedrun_2b_muon
+#       --module agpt --config speedrun_2b_muon
 
 import torchtitan.experiments.ezpz.datasets  # noqa: F401 — register HF datasets
 
-from torchtitan.experiments.ezpz.agpt.config_registry import agpt
+from torchtitan.models.agpt.config_registry import agpt
 from torchtitan.experiments.ezpz.optimizer import (
     default_mano,
     default_muon,

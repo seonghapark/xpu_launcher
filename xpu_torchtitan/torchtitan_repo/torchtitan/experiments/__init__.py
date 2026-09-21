@@ -13,7 +13,7 @@ _supported_experiments = frozenset(
         "autoparallel.llama3",
         "autoparallel.local_map_deepseek_v3",
         "torchft.llama3",
-        "ezpz.agpt",
+        "agpt",
         "ezpz.moe",
         "ezpz.qwen3",
         "rl",

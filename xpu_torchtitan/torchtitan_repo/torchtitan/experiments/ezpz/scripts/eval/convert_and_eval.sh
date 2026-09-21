@@ -123,7 +123,7 @@ if [[ "$EVAL_ONLY" != true ]]; then
     python3 "${EVAL_DIR}/convert_to_hf.py" \
         "${DCP_DIR}" \
         "${HF_DIR}" \
-        --model_name "experiments.ezpz.agpt" \
+        --model_name "experiments.agpt" \
         --model_flavor "${MODEL_FLAVOR}" \
         --export_dtype "${EXPORT_DTYPE}"
 

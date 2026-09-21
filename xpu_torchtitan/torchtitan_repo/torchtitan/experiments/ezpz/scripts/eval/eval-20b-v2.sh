@@ -100,7 +100,7 @@ for step in $STEPS; do
             PYTHONPATH=".:${PYTHONPATH:-}" python3 torchtitan/experiments/ezpz/eval/convert_to_hf.py \
                 "${DCP_DIR}" \
                 "${HF_DIR_ABS}" \
-                --model_name "experiments.ezpz.agpt" \
+                --model_name "experiments.agpt" \
                 --model_flavor "20b" \
                 --export_dtype "bfloat16"
         ) || { echo "[1/2] Conversion FAILED — skipping eval for step ${step}"; continue; }

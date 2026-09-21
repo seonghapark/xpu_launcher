@@ -106,7 +106,7 @@ log_message INFO "==========================================="
 ezpz launch --nproc 1 --nproc_per_node 1 \
     -- \
     python3 -m torchtitan.experiments.ezpz.train \
-    --module=ezpz.agpt \
+    --module=agpt \
     --config=agpt_debugmodel \
     --checkpoint.no-enable \
     --compile.no-enable \

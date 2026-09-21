@@ -165,7 +165,7 @@ run_one() {
     #     the first training step (jobs 12468306, 12468308). 57th sync
     #     (PR #3674): AC is now a positional tyro subcommand, passed last.
     ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-        --module=ezpz.agpt \
+        --module=agpt \
         --config="agpt_${MODEL}_chunkedce" \
         --compile.no-enable \
         --checkpoint.no-enable \

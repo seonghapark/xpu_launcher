@@ -140,7 +140,7 @@ log_message INFO "==========================================="
 # 12469584. --validator.freq=1 forces one validation pass during the single
 # training step so the val index gets written.
 ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-    --module=ezpz.agpt \
+    --module=agpt \
     --config="agpt_${MODEL}" \
     --checkpoint.no-enable \
     --compile.no-enable \

@@ -254,7 +254,7 @@ ezpz launch \
     "${mfr_args[@]}" \
     -- \
     python3 -m torchtitan.experiments.ezpz.train \
-    --module=ezpz.agpt \
+    --module=agpt \
     --config="agpt_${MODEL}${CONFIG_SUFFIX:-}" \
     --checkpoint.enable \
     --checkpoint.folder="${CKPT_DIR}" \

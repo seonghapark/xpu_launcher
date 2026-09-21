@@ -217,7 +217,7 @@ qsub -l select=4 -q debug-scaling ~/test.sh
 ssh <head_node> "export PBS_JOBID=... PBS_NODEFILE=...; \
   nohup bash -l .ezpz-interactive-launch.sh \
   python3 -m torchtitan.experiments.ezpz.train \
-  --module=ezpz.agpt --config=agpt_80b --compile.enable \
+  --module=agpt --config=agpt_80b --compile.enable \
   --parallelism.tensor_parallel_degree=2 \
   --optimizer=sophiag --optimizer.lr=2.28e-5 \
   --training.steps=10 ... > test-80b-4n.out 2>&1 &"

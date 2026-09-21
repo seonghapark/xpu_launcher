@@ -160,7 +160,7 @@
   XPU resource limit, not a merge regression). Big lesson: running jobs from a
   git worktree needs `.venv` / `.venv.tar.gz` / `assets/hf` symlinked in
   (worktrees only carry tracked files).
-- The `ImportError: Cannot import config_registry for module 'ezpz.agpt'` is a
+- The `ImportError: Cannot import config_registry for module 'agpt'` is a
   generic MASK from `config/manager.py` -- always look past it to the real
   traceback (a user hit it just from running in the wrong dir).
 - Pulled the local Mac mirror forward 23 commits to `cf99e127e` (stash-pull-pop;

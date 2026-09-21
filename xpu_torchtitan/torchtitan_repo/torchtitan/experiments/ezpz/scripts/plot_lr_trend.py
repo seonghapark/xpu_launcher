@@ -103,7 +103,7 @@ def _smooth(ys, frac=0.15):
 
 
 def csv_2b(gbs: int, opt: str) -> str:
-    return f"outputs/lrtrend-2b/gbs{gbs}/lr_finder/ezpz/ezpz.agpt/2b/{opt}/lr_finder_data.csv"
+    return f"outputs/lrtrend-2b/gbs{gbs}/lr_finder/ezpz/agpt/2b/{opt}/lr_finder_data.csv"
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +212,7 @@ _OPT_CMAP = OPT_CMAP  # canonical (see OPT_COLOR/OPT_CMAP at module top)
 
 def _csv_for(model: str, gbs: int, opt: str) -> str:
     flav = "20b" if model == "20b" else "2b"
-    return (f"outputs/lrtrend-{flav}/gbs{gbs}/lr_finder/ezpz/ezpz.agpt/"
+    return (f"outputs/lrtrend-{flav}/gbs{gbs}/lr_finder/ezpz/agpt/"
             f"{flav}/{opt}/lr_finder_data.csv")
 
 
@@ -444,7 +444,7 @@ def plot_2b_all_optimizers(out: Path, gbs: int = 6144) -> None:
 
 
 def plot_80b_all_optimizers(out: Path) -> None:
-    base = "outputs/lr_finder/ezpz/ezpz.agpt/80B"
+    base = "outputs/lr_finder/ezpz/agpt/80B"
     # adamw 6144 from the dated record (live CSV overwritten by trend probes)
     adamw_lr = [1.0e-8, 1.848e-8, 3.415e-8, 6.31e-8, 1.166e-7, 2.154e-7,
                 3.981e-7, 7.356e-7]

@@ -45,7 +45,7 @@ mkdir -p "${LOG_DIR}"
 # the workers race ahead of training and spam "re-loop epoch K" warnings
 # (job 12468322 logged 2.4M re-loops in 30min and never trained a step).
 ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-    --module=ezpz.agpt \
+    --module=agpt \
     --config=agpt_2b_chunkedce \
     --compile.no-enable \
     --checkpoint.no-enable \

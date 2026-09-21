@@ -31,6 +31,6 @@ source /tmp/.venv/bin/activate
 
 # ---- Launch ----
 ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-    --module=ezpz.agpt \
+    --module=agpt \
     --config="$CONFIG" \
     --debug.print-config

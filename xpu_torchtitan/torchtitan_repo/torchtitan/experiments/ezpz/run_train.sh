@@ -36,7 +36,7 @@ MODEL="${MODEL:-2b}"
 _fallback_dfl="torchtitan/experiments/ezpz/data-lists/$(ezpz_get_machine_name)/books.txt"
 DFL="${DFL:-${DATA_FILE_LIST:-${_fallback_dfl}}}"
 
-MODULE=${MODULE:-"ezpz.agpt"}
+MODULE=${MODULE:-"agpt"}
 CONFIG=${CONFIG:-"ezpz_agpt_${MODEL}"}
 
 NGPU=${NGPU:-${NGPUS:-${WORLD_SIZE:-4}}}

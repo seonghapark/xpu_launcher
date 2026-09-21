@@ -5,15 +5,14 @@
 # LICENSE file in the root directory of this source tree.
 
 # torchtitan/datasets/tokenizer/sptoken.py
+import logging
 import os
 from typing import List
-
-import ezpz
 
 import sentencepiece as spm
 
 
-logger = ezpz.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class SPTokenizer:

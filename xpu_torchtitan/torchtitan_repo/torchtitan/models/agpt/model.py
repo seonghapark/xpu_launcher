@@ -39,7 +39,7 @@ class AgptModel(Llama3Model):
                 config=config, **kwargs
             )
 
-            from torchtitan.experiments.ezpz.agpt.sharding import (
+            from torchtitan.models.agpt.sharding import (
                 set_agpt_sharding_config,
             )
 

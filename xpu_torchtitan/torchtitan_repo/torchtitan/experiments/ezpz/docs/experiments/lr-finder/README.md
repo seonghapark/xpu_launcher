@@ -211,7 +211,7 @@ Add `--lr_finder.enable` to any training command:
 
 ```bash
 ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-  --module ezpz.agpt --config agpt_2b \
+  --module agpt --config agpt_2b \
   --training.steps 1000 \
   --checkpoint.no_enable \
   --lr_finder.enable
@@ -237,18 +237,18 @@ LR exponentially from `init_lr` to `max_lr`.
 ```bash
 # AdamW (default)
 ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-  --module ezpz.agpt --config agpt_20b \
+  --module agpt --config agpt_20b \
   --training.steps 1000 --checkpoint.no_enable --lr_finder.enable
 
 # Muon
 ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-  --module ezpz.agpt --config agpt_20b \
+  --module agpt --config agpt_20b \
   --training.steps 1000 --checkpoint.no_enable --lr_finder.enable \
   --optimizer muon
 
 # SophiaG
 ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-  --module ezpz.agpt --config agpt_20b \
+  --module agpt --config agpt_20b \
   --training.steps 1000 --checkpoint.no_enable --lr_finder.enable \
   --optimizer sophiag
 ```
@@ -275,7 +275,7 @@ LRF_MODELS="2b 20b" LRF_OPTIMIZERS="adamw muon sophiag" \
 # From repo root (figures are now in a shared per-family dir; prefix the
 # filenames by machine, e.g. sunspot_2b.png, when committing):
 python3 torchtitan/experiments/ezpz/utils/plot_lr_finder.py \
-    --data-dir outputs/lr_finder/ezpz/ezpz.agpt \
+    --data-dir outputs/lr_finder/ezpz/agpt \
     --output-dir torchtitan/experiments/ezpz/docs/experiments/lr-finder/agpt/figures
 ```
 

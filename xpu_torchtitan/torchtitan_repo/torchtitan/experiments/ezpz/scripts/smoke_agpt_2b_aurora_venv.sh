@@ -86,7 +86,7 @@ log_message INFO "==========================================="
 
 # ---- Launch ----
 ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-    --module=ezpz.agpt \
+    --module=agpt \
     --config="agpt_${MODEL}" \
     --compile.no-enable \
     --checkpoint.enable \

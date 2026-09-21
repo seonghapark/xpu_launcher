@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from torchtitan.experiments.ezpz.agpt.parallelize import parallelize_llama
+from torchtitan.models.agpt.parallelize import parallelize_llama
 from torchtitan.models.common import (
     ComplexRoPE,
     compute_ffn_hidden_dim,
@@ -180,11 +180,11 @@ class ReLUSquaredFeedForward(FeedForward):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         h = F.relu(self.w1(x))
         return self.w2(h * h * self.w3(x))
-from torchtitan.experiments.ezpz.agpt.model import AgptModel
+from torchtitan.models.agpt.model import AgptModel
 from torchtitan.models.common.param_init import depth_scaled_std
 from torchtitan.models.llama3.model import Llama3TransformerBlock
 from torchtitan.models.llama3.state_dict_adapter import Llama3StateDictAdapter
-from torchtitan.experiments.torchft.config.job_config import FaultTolerantModelSpec
+from torchtitan.protocols.model_spec import ModelSpec
 
 __all__ = [
     "EzpzScaledDotProductAttention",
@@ -640,19 +640,17 @@ agpt_configs["2b_kitchen_sink"] = agpt_configs["2B_kitchen_sink"]
 def model_registry(
     flavor: str,
     attn_backend: str = "sdpa",
-) -> FaultTolerantModelSpec:
+) -> ModelSpec:
     from torchtitan.distributed.pipeline_parallel import pipeline_llm
-    from torchtitan.experiments.torchft.diloco import fragment_llm
 
     config = agpt_configs[flavor]
 
-    return FaultTolerantModelSpec(
-        name="ezpz.agpt",
+    return ModelSpec(
+        name="agpt",
         flavor=flavor,
         model=config,
         parallelize_fn=parallelize_llama,
         pipelining_fn=pipeline_llm,
         post_optimizer_build_fn=None,
         state_dict_adapter=Llama3StateDictAdapter,
-        fragment_fn=fragment_llm,
     )

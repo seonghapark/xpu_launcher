@@ -75,7 +75,7 @@ run_one() {
     # hunting fires during the first compile/forward) or confirm the
     # config runs cleanly. Long enough to see TPS/MFU stabilize.
     ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-        --module ezpz.agpt \
+        --module agpt \
         --config "${config}" \
         --training.steps 10 \
         --checkpoint.no_enable \

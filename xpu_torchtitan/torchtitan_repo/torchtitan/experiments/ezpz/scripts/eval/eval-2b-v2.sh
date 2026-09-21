@@ -120,7 +120,7 @@ for step in $STEPS; do
             PYTHONPATH=".:${PYTHONPATH:-}" python3 "${CONVERT_PY}" \
                 "${DCP_DIR}" \
                 "${HF_DIR_ABS}" \
-                --model_name "experiments.ezpz.agpt" \
+                --model_name "experiments.agpt" \
                 --model_flavor "2b" \
                 --export_dtype "bfloat16"
         ) || { echo "[1/2] Conversion FAILED — skipping eval for step ${step}"; continue; }

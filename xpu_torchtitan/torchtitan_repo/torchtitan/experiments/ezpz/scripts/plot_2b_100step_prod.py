@@ -53,7 +53,7 @@ def smooth(ys, frac=0.10):
 
 
 def load(gbs, opt):
-    p = f"{BASE}/gbs{gbs}/lr_finder/ezpz/ezpz.agpt/2b/{opt}/lr_finder_data.csv"
+    p = f"{BASE}/gbs{gbs}/lr_finder/ezpz/agpt/2b/{opt}/lr_finder_data.csv"
     if not os.path.exists(p):
         return None
     rows = list(csv.DictReader(open(p)))

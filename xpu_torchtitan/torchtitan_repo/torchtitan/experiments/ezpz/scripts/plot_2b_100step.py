@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 # repo root = 4 levels up: scripts/ -> ezpz/ -> experiments/ -> torchtitan/ -> <root>
 REPO = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
-BASE = f"{REPO}/outputs/lrfind-2b-100step/lr_finder/ezpz/ezpz.agpt/2b"
+BASE = f"{REPO}/outputs/lrfind-2b-100step/lr_finder/ezpz/agpt/2b"
 OUT = f"{REPO}/torchtitan/experiments/ezpz/docs/experiments/lr-finder/agpt/2b/figures/lr_finder_2b_100step_all_optimizers.png"
 OPT_COLOR = {"adamw": "#ff7f0e", "mano": "#1f77b4", "sophiag": "#2ca02c"}
 OPT_LABEL = {"adamw": "AdamW", "mano": "mano", "sophiag": "sophiag"}

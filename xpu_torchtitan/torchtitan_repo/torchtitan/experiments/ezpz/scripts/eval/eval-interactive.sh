@@ -24,7 +24,7 @@ echo "=== Converting 2B step-5000 DCP → HF ==="
 time python3 torchtitan/experiments/ezpz/eval/convert_to_hf.py \
     outputs/checkpoints/agpt-2b-sophiag-olmo-mix-1124-n256-gbs3072/step-5000 \
     outputs/evals/agpt-2b/step-5000/hf \
-    --model_name experiments.ezpz.agpt \
+    --model_name experiments.agpt \
     --model_flavor 2b \
     --hf_assets_path assets/hf/gemma-7b \
     --export_dtype bfloat16 \

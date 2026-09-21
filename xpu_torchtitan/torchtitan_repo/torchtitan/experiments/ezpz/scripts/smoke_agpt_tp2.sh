@@ -69,7 +69,7 @@ GBS=$(( NGPUS / 2 ))
 echo "smoke: NNODES=${NNODES} NGPUS=${NGPUS} MODEL=${MODEL} TP=2 GBS=${GBS}" | tee "${LOG_FILE}"
 
 ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-    --module=ezpz.agpt \
+    --module=agpt \
     --config="agpt_${MODEL}_chunkedce" \
     --parallelism.tensor-parallel-degree=2 \
     --compile.no-enable \

@@ -24,7 +24,7 @@
 # Environment variables:
 #   BENCH_CONFIGS   — space-separated configs to run (default: all agpt + moe)
 #                     Format: "config_name" or "config_name:tp_degree"
-#                     Module is inferred: agpt_* -> ezpz.agpt, moe_* -> ezpz.moe
+#                     Module is inferred: agpt_* -> agpt, moe_* -> ezpz.moe
 #   BENCH_STEPS     — training iterations per run (default: 10)
 #   BENCH_SEQ_LEN   — sequence length (default: 8192)
 #   BENCH_LOCAL_BS  — local batch size (default: 1)
@@ -92,12 +92,12 @@ for ((i = 0; i < ${#CONFIG_SPECS[@]}; i++)); do
 
     # Infer module from config prefix
     if [[ "${config}" == agpt_* ]]; then
-        module="ezpz.agpt"
+        module="agpt"
     elif [[ "${config}" == moe_* ]]; then
         module="ezpz.moe"
     else
-        echo "WARNING: unknown config prefix for '${config}', assuming ezpz.agpt"
-        module="ezpz.agpt"
+        echo "WARNING: unknown config prefix for '${config}', assuming agpt"
+        module="agpt"
     fi
 
     LABELS[$i]="${config}"

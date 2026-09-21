@@ -4,7 +4,6 @@ import os
 from types import SimpleNamespace
 from typing import Any
 
-import ezpz
 import torch
 
 from torchtitan.components.dataloader import BaseDataLoader
@@ -67,9 +66,7 @@ class BlendCorpusDataLoader(BaseDataLoader):
     class Config(BaseDataLoader.Config):
         num_workers: int = 0
         persistent_workers: bool = False
-        pin_memory: bool = field(
-            default_factory=lambda: ezpz.get_torch_device_type() == "cuda"
-        )
+        pin_memory: bool = field(default_factory=torch.cuda.is_available)
         prefetch_factor: int | None = None
         infinite: bool = True
 

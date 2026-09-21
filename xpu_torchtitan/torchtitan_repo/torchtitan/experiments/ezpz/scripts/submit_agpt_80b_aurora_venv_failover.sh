@@ -222,7 +222,7 @@ FAILOVER_IDLE_TIMEOUT="${PREFLIGHT_IDLE_TIMEOUT:-600}" FAILOVER_MAX_RETRIES=2 \
 log_message INFO "preflight smoke OK — proceeding to main training launch"
 
 failover_run ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-    --module=ezpz.agpt \
+    --module=agpt \
     --config="agpt_${MODEL}${CONFIG_SUFFIX:-}" \
     --checkpoint.enable \
     --checkpoint.folder="${CKPT_DIR}" \

@@ -100,7 +100,7 @@ on this hardware. Different final loss is from streaming data shuffle variance.
 
 ```bash
 ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-    --module ezpz.agpt --config speedrun_2b_adamw_qknorm
+    --module agpt --config speedrun_2b_adamw_qknorm
 
 qsub -l select=2 -N speedrun_2b_muon -v CONFIG=speedrun_2b_muon \
     torchtitan/experiments/ezpz/competition/submit_run.sh

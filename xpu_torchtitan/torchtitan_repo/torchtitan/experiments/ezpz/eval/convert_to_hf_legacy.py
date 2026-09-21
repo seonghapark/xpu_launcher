@@ -124,7 +124,7 @@ if __name__ == "__main__":
     parser.add_argument("input_dir", type=Path)
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("--hf_assets_path", type=Path, default="./assets/hf/gemma-7b")
-    parser.add_argument("--model_name", type=str, default="experiments.ezpz.agpt")
+    parser.add_argument("--model_name", type=str, default="experiments.agpt")
     parser.add_argument("--model_flavor", type=str, default="2b")
     parser.add_argument(
         "--export_dtype",

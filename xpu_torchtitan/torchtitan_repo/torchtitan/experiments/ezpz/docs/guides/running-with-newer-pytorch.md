@@ -83,7 +83,7 @@
 1. Run training:
 
    ```bash
-   MODULE=ezpz.agpt
+   MODULE=agpt
    CONFIG=agpt_2b
    ezpz launch python3 -m torchtitan.experiments.ezpz.train \
        --module="${MODULE}" \
@@ -96,7 +96,7 @@
    - <details closed><summary>AuroraGPT-20B:</summary>
 
      ```bash
-     MODULE=ezpz.agpt
+     MODULE=agpt
      CONFIG=agpt_20b
      ezpz launch python3 -m torchtitan.experiments.ezpz.train \
          --module="${MODULE}" \
@@ -111,7 +111,7 @@
    - <details closed><summary>AuroraGPT-80B:</summary>
 
      ```bash
-     MODULE=ezpz.agpt
+     MODULE=agpt
      CONFIG=agpt_80b
      ezpz launch python3 -m torchtitan.experiments.ezpz.train \
          --module="${MODULE}" \
@@ -285,7 +285,7 @@ For more detail (full sweep, plots, methodology) see the
 
    ```bash
    ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-       --module=ezpz.agpt \
+       --module=agpt \
        --config=agpt_2b \
        --training.steps=10 \
        --checkpoint.no-enable \

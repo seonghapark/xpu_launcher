@@ -43,7 +43,7 @@ from torchtitan.tools.logging import logger
 
 import torchtitan.experiments.ezpz.datasets  # noqa: F401 — enable arbitrary HF datasets
 
-DEFAULT_MODULE = "ezpz.agpt"
+DEFAULT_MODULE = "agpt"
 DEFAULT_CONFIG = "ezpz_agpt_2b"
 
 fp = Path(__file__)
@@ -315,7 +315,7 @@ def _translate_legacy_args(args: list[str]) -> list[str]:
         if key == "job.config-file":
             raise ValueError(
                 "`--job.config-file` is no longer supported for ezpz. "
-                "Use `--module ezpz.agpt --config ezpz_agpt_debugmodel` and CLI overrides instead."
+                "Use `--module agpt --config ezpz_agpt_debugmodel` and CLI overrides instead."
             )
 
         if key in {"experimental.custom-args-module", "experimental.custom-import"}:

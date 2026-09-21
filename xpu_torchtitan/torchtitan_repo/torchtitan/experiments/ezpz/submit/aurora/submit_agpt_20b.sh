@@ -75,7 +75,7 @@ fi
 # ---- Launch ----
 # activation-checkpoint:full \   (positional tyro subcommand, passed last; 57th sync / PR #3674)
 ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-    --module=ezpz.agpt \
+    --module=agpt \
     --config="agpt_${MODEL}" \
     --checkpoint.enable \
     --checkpoint.folder="${CKPT_DIR}" \

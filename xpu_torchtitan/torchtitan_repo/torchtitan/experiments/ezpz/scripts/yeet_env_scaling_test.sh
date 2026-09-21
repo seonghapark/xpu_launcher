@@ -94,7 +94,7 @@ CKPT_DIR="checkpoints/yeet-scaling/n${NNODES}-job${PBS_JOBID%%.*}"
 
 TRAIN_T0=$(date +%s.%N)
 ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-    --module=ezpz.agpt \
+    --module=agpt \
     --config=agpt_2b \
     --no-checkpoint.enable \
     --dataloader.dataset=blendcorpus \

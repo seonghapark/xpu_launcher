@@ -24,8 +24,6 @@ Differences vs upstream `parallelize_llama`:
   `reshard_after_forward=reshard_after_forward_policy == "always"`).
 """
 
-import ezpz
-import ezpz.distributed
 import torch
 import torch.nn as nn
 from torch.distributed.device_mesh import DeviceMesh
@@ -138,9 +136,7 @@ def disable_fsdp_gradient_division(model: nn.Module) -> None:
     """
     force_sum_reduction = False
     if torch.distributed.is_available() and torch.distributed.is_initialized():
-        backend = ezpz.distributed.get_torch_backend() or str(
-            torch.distributed.get_backend()
-        )
+        backend = str(torch.distributed.get_backend())
         if backend and "nccl" not in str(backend).lower():
             force_sum_reduction = True
 

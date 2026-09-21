@@ -120,7 +120,7 @@ DATA_CACHE_PATH="${CKPT_DIR}/.cache/olmo-mix-1124/index-cache"
 DFL=torchtitan/experiments/ezpz/data-lists/aurora/olmo-mix-1124.txt
 
 ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-    --module=ezpz.agpt \
+    --module=agpt \
     --config=agpt_80b \
     --checkpoint.enable \
     --checkpoint.folder="${CKPT_DIR}" \

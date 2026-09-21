@@ -8,7 +8,7 @@ set -eo pipefail
 # Wraps `torchtitan.experiments.ezpz.train` (torchtitan-side package path;
 # renaming it requires a torchtitan change), which trains the aGPT models
 # (agpt_2b / agpt_20b, ...) registered in
-# torchtitan/experiments/ezpz/agpt/config_registry.py with FSDP2 sharding,
+# torchtitan/models/agpt/config_registry.py with FSDP2 sharding,
 # DCP checkpoints, and the blendcorpus data pipeline.
 #
 # Run inside a PBS job shell (xpu launch reads PBS_NODEFILE for multi-node).
@@ -18,8 +18,8 @@ set -eo pipefail
 #
 # Environment variables:
 #   MODEL             aGPT flavor: 2b | 20b | debugmodel | ...  Default: 2b
-#                     (resolves to CONFIG=ezpz_agpt_${MODEL})
-#   CONFIG            Config registry entry, overrides MODEL.  Default: ezpz_agpt_${MODEL}
+#                     (resolves to CONFIG=agpt_${MODEL})
+#   CONFIG            Config registry entry, overrides MODEL.  Default: agpt_${MODEL}
 #   TORCHTITAN_ROOT   TorchTitan tree.  Default: <this script dir>/torchtitan_repo
 #   VENV              Virtualenv with torchtitan and its deps.  Default: ${TORCHTITAN_ROOT}/.venv
 #   DATA_FILE_LIST    blendcorpus data file list.
@@ -55,8 +55,8 @@ done
 TORCHTITAN_ROOT="${TORCHTITAN_ROOT:-${SCRIPT_DIR}/torchtitan_repo}"
 VENV="${VENV:-${TORCHTITAN_ROOT}/.venv}"
 MODEL="${MODEL:-2b}"
-MODULE="${MODULE:-ezpz.agpt}"
-CONFIG="${CONFIG:-ezpz_agpt_${MODEL}}"
+MODULE="${MODULE:-agpt}"
+CONFIG="${CONFIG:-agpt_${MODEL}}"
 DATA_FILE_LIST="${DATA_FILE_LIST:-${TORCHTITAN_ROOT}/torchtitan/experiments/ezpz/data-lists/aurora/books.txt}"
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-outputs/checkpoints/aGPT-${MODEL}-$(basename "${DATA_FILE_LIST%.txt}")}"
 COMM_MODE="${COMM_MODE:-}"

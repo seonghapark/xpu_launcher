@@ -10,7 +10,7 @@ leaderboard, experiment tracking, and modifications log.
 ```bash
 # Run a single config
 ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-    --module ezpz.agpt --config speedrun_2b_muon
+    --module agpt --config speedrun_2b_muon
 
 # Submit to PBS (2 nodes, 3h)
 qsub -l select=2 -N speedrun_2b_muon -v CONFIG=speedrun_2b_muon \

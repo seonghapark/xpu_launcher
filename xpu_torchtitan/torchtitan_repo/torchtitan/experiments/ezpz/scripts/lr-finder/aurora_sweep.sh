@@ -24,7 +24,7 @@ run_lr_finder() {
     echo "=== [$(date +%H:%M:%S)] ${label} (TP=${tp}, LBS=${lbs}, GAS=${gas}) ==="
 
     timeout 1800 python3 -m torchtitan.experiments.ezpz.train \
-        --module=ezpz.agpt \
+        --module=agpt \
         --config="agpt_${model}" \
         ${compile_flag} \
         --parallelism.tensor_parallel_degree=${tp} \

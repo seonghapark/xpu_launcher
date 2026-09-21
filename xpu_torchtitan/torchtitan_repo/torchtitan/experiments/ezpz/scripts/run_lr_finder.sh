@@ -116,7 +116,7 @@ _JOBTAG="${PBS_JOBID%%.*}"
 OUTDIR="outputs/lr_finder/${TIMESTAMP}${_JOBTAG:+_${_JOBTAG}}"
 mkdir -p "${OUTDIR}"
 # The trainer writes the CSV/plot/npz under <dump_folder>/lr_finder/
-# ezpz.agpt/<flavor>/<optimizer>/ -- a path keyed by model+optimizer, NOT
+# agpt/<flavor>/<optimizer>/ -- a path keyed by model+optimizer, NOT
 # by GBS. Concurrent same-(model,optimizer) jobs at different GBS therefore
 # clobber each other's CSV. Set LRF_DUMP_FOLDER per job (default ./outputs)
 # so a trend sweep isolates each GBS's outputs.
@@ -245,7 +245,7 @@ for model in "${MODELS[@]}"; do
             "${lrf_mfr[@]}" \
             -- \
             python3 -m torchtitan.experiments.ezpz.train \
-            --module ezpz.agpt \
+            --module agpt \
             --config "${config}" \
             --job.dump-folder "${LRF_DUMP_FOLDER}" \
             --optimizer "${opt}" \

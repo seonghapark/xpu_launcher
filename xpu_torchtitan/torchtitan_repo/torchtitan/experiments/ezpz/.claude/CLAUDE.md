@@ -165,7 +165,7 @@ so always build the tarball first via `ezpz tar-env`. See
 ### Evaluation Pipeline
 
 - **Checkpoint conversion:** `eval/convert_to_hf.py` converts DCP → HF safetensors.
-  Use `--model_name experiments.ezpz.agpt --model_flavor 2b`.
+  Use `--model_name experiments.agpt --model_flavor 2b`.
   2B takes ~4 min, 20B takes ~20–30 min.
 - **HF config:** Must copy `eval/configs/agpt_{2b,20b}_config.json` + tokenizer
   files from `assets/hf/gemma-7b/` into the HF checkpoint dir.
@@ -214,7 +214,7 @@ torchtitan/experiments/ezpz/
 ```bash
 # Interactive (from compute node with allocation)
 ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-    --module ezpz.agpt --config ezpz_agpt_2b
+    --module agpt --config ezpz_agpt_2b
 
 # PBS submission (from login node)
 qsub -l select=2 -N my_job -v CONFIG=speedrun_2b_muon \

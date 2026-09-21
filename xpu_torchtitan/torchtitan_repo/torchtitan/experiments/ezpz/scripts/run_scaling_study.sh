@@ -50,7 +50,7 @@ DATASET_PATH="torchtitan/experiments/ezpz/data-lists/$(ezpz_get_machine_name)/bo
 # ---------------------------------------------------------------------------
 #              agpt_2b     agpt_20b    agpt_80b    moe_2b      moe_7b
 LABELS=(       "agpt_2b"   "agpt_20b"  "agpt_80b"  "moe_2b"    "moe_7b"    )
-MODULES=(      "ezpz.agpt" "ezpz.agpt" "ezpz.agpt" "ezpz.moe"  "ezpz.moe"  )
+MODULES=(      "agpt" "agpt" "agpt" "ezpz.moe"  "ezpz.moe"  )
 CONFIGS=(      "agpt_2b"   "agpt_20b"  "agpt_80b"  "moe_2b"    "moe_7b"    )
 LBS_VALS=(     1           1           1           16          2           )
 TP_VALS=(      1           1           2           1           1           )

@@ -93,7 +93,7 @@ the on-disk file type (`parquet`, `json`, `arrow`, `csv`, or `text`).
 
 ```bash
 python3 -m torchtitan.experiments.ezpz.train \
-    --module ezpz.agpt \
+    --module agpt \
     --config agpt_2b \
     --dataloader.dataset olmo_mix_wiki_local
 ```

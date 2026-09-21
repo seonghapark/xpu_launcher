@@ -163,7 +163,7 @@ for model in "${MODELS[@]}"; do
             label="${model}_tp${tp}_pp${pp}_dp${dp}"
             logfile="${OUTDIR}/${label}.log"
 
-            echo "--- [${label}] (module=ezpz.agpt config=agpt_${model,,}) ---"
+            echo "--- [${label}] (module=agpt config=agpt_${model,,}) ---"
 
             # Clear stale index cache and pre-build with MATCHING parameters
             # so all ranks find the index files during multi-rank training.
@@ -248,7 +248,7 @@ print('OK')
                 stdbuf -oL -eL \
                 env NGPU="${NGPU}" PYTHONUNBUFFERED=1 \
                 ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-                    --module ezpz.agpt \
+                    --module agpt \
                     --config "agpt_${model,,}" \
                     --training.steps "${BENCH_STEPS}" \
                     --training.local_batch_size "${BENCH_LOCAL_BS}" \

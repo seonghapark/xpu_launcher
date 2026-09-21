@@ -68,8 +68,8 @@ SEED="${SEED:-42}"
 # agpt_debugmodel @ TP=2 exercises model.parallelize's local_map path on
 # a single node (12 tiles).
 DEFAULT_CONFIGS=(
-    "ezpz.agpt:agpt_debugmodel:"
-    "ezpz.agpt:agpt_debugmodel:--parallelism.tensor-parallel-degree=2"
+    "agpt:agpt_debugmodel:"
+    "agpt:agpt_debugmodel:--parallelism.tensor-parallel-degree=2"
     "ezpz.moe:moe_debugmodel:--training.seq-len=512 --training.local-batch-size=1"
 )
 if [[ -n "${SMOKE_CONFIGS:-}" ]]; then
@@ -107,8 +107,8 @@ echo "" | tee -a "${LOG}"
 # --- Phase 1: import probe (fail fast) ---
 echo "--- import probe ---" | tee -a "${LOG}"
 python3 -c "
-from torchtitan.experiments.ezpz.agpt.parallelize import parallelize_llama
-from torchtitan.experiments.ezpz.agpt.config_registry import agpt_debugmodel
+from torchtitan.models.agpt.parallelize import parallelize_llama
+from torchtitan.models.agpt.config_registry import agpt_debugmodel
 from torchtitan.experiments.ezpz.moe.parallelize import parallelize_moe
 from torchtitan.experiments.ezpz.moe.config_registry import moe_debugmodel
 from torchtitan.experiments.ezpz.moe.activation_checkpoint import MoeSelectiveAC

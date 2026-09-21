@@ -86,7 +86,7 @@ if __name__ == "__main__":
         "--model_name",
         type=str,
         nargs="?",
-        default="experiments.ezpz.agpt",
+        default="experiments.agpt",
     )
     parser.add_argument(
         "--model_flavor", type=str, nargs="?", default="2b"

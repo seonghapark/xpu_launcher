@@ -7,7 +7,7 @@
 #
 # Or run individual configs:
 #   ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-#       --module ezpz.agpt --config speedrun_2b_muon
+#       --module agpt --config speedrun_2b_muon
 
 set -euo pipefail
 
@@ -33,7 +33,7 @@ for config in "${CONFIGS[@]}"; do
 
     # Run training, capture output
     output=$(ezpz launch python3 -m torchtitan.experiments.ezpz.train \
-        --module ezpz.agpt \
+        --module agpt \
         --config "$config" \
         2>&1) || {
         echo "$config,FAILED,,,," >> "$RESULTS_FILE"

@@ -127,7 +127,7 @@ for opt in "${OPTS[@]}"; do
         --timeout "${CONV_IDLE_TIMEOUT}" \
         -- \
         python3 -m torchtitan.experiments.ezpz.train \
-        --module ezpz.agpt \
+        --module agpt \
         --config agpt_80b \
         --job.dump-folder "${CONV_DUMP_FOLDER}" \
         --optimizer "${opt}" \
