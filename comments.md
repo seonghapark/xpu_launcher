@@ -16,58 +16,69 @@
 
 
 
-**Single-rank XPU 1-step Smoke**
+## TorchTitan quick commands
+
+All TorchTitan runs use `xpu_torchtitan/run_train_torchtitan.sh`.
+
+**Single-node offline smoke dry-run**
+
 ```bash
-./run_torchtitan_xpu.sh single
+cd /lus/flare/projects/datascience/seonghapark/xpu_launcher/xpu_torchtitan
+
+MODEL_PATH=./torchtitan_repo/tests/assets/tokenizer \
+DATASET_NAME=c4_test \
+TRAINING_STEPS=1 \
+SEQ_LEN=128 \
+./run_train_torchtitan.sh single --dry-run
 ```
 
-**Dry Run**
-To see what command `xpu launch` would build without actually training:
+Remove `--dry-run` to execute the training command. For multi-node execution
+inside a PBS allocation, use `multi`; the wrapper reads `PBS_NODEFILE`.
 
 ```bash
-./run_torchtitan_xpu.sh single --dry-run
-```
-
-**Run with small tweaks**
-For example, to change the sequence length and step count:
-
-```bash
-TRAIN_STEPS=3 \
+MODEL_PATH=/path/to/model/assets \
+MODULE=llama3 \
+CONFIG=llama3_8b \
+TRAINING_STEPS=3 \
 SEQ_LEN=256 \
-BATCH_SIZE=1 \
-./run_torchtitan_xpu.sh single
+./run_train_torchtitan.sh multi
 ```
 
-**Passing extra train args**
-Everything after `--` is forwarded to the Python train script.
+**Load the AGPT 2B DCP model weights**
 
 ```bash
-./run_torchtitan_xpu.sh single -- --steps 2 --seq-len 512 --lr 5e-6
+CKPT=/lus/flare/projects/AuroraGPT/foremans/runs/agpt-2b-v2/torchtitan-ezpz/outputs/checkpoints/agpt-2b-sophiag-olmo-mix-1124-n256-gbs6144/step-92859
+
+MODEL_PATH=/lus/flare/projects/datascience/seonghapark/agpt-2b-v2-256n-step-92859-safetensors \
+MODULE=agpt \
+CONFIG=agpt_2b \
+./run_train_torchtitan.sh multi -- \
+	--checkpoint.initial_load_path "$CKPT"
 ```
 
-**Setting model/log paths**
+`MODEL_PATH` contains model/tokenizer assets. `MODULE` and `CONFIG` select the
+TorchTitan architecture. The DCP path supplies model weights. This is
+model-only initialization because the old checkpoint's SophiaG optimizer state
+does not match the current AdamW configuration.
+
+Everything after `--` is forwarded to TorchTitan. For example:
+
 ```bash
-MODEL_PATH=./assets/hf/gemma-7b \
-LOG_DIR=./outputs/my_gemma_run \
-./run_torchtitan_xpu.sh single
+MODEL_PATH=/path/to/model/assets \
+./run_train_torchtitan.sh single --dry-run -- \
+	--training.steps 2 --training.seq_len 512
 ```
 
-**Checking results**
-```bash
-cat xpu_launcher/outputs/my_run/torchtitan_train_rank0.json
-```
-
-The defaults already make for a safe smoke run:
+Useful defaults:
 
 ```text
-NPROC_PER_NODE=12 \
-NNODES=10 \
-SPARE_NODES=2 \
-MODEL_PATH=../../agpt-2b-v2-256n-step-92859-safetensors \
-CONFIG=agpt_2b \
-SEQ_LEN=128
-BATCH_SIZE=1
-TRAIN_MODE=lm_head
-DTYPE=bfloat16
-DEVICE=xpu
+MODULE=llama3
+CONFIG=llama3_debugmodel
+DATASET_NAME=pg19_multinews
+TRAINING_STEPS=100
+SEQ_LEN=16384
+NPROC_PER_NODE=4
 ```
+
+The launcher detects XPU/CUDA/ROCm automatically. `NPROC_PER_NODE` remains an
+explicit topology setting and is not inferred from accelerator device count.

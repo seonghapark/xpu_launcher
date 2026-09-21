@@ -141,10 +141,9 @@ TRAIN_PYTHON_BIN="${TRAIN_PYTHON_BIN:-$TRAIN_PYTHON_BIN_DEFAULT}"
 
 mkdir -p "$LOG_DIR"
 
-# titan_train.py = ezpz-free entry: FaultTolerantTrainer upgrade (FT_TRAINER=0
-# to disable), --optimizer swap, IPEX + xccl split-group XPU workarounds
+# titan_train.py normalizes MPI/PBS environment variables, installs the XCCL
+# workaround when needed, and delegates to torchtitan.train.main().
 export TORCHTITAN_ROOT
-export FT_TRAINER="${FT_TRAINER:-1}"
 TRAIN_CMD=(
   "$TRAIN_PYTHON_BIN" "${SCRIPT_DIR}/titan_train.py"
   "--module" "$MODULE"
@@ -157,10 +156,6 @@ TRAIN_CMD=(
   "--checkpoint.enable"
   "--checkpoint.folder" "$CKPT_FOLDER"
 )
-
-if [[ -n "${OPTIMIZER:-}" ]]; then
-  TRAIN_CMD+=("--optimizer" "$OPTIMIZER")
-fi
 
 if [[ -n "$DATASET_PATH" ]]; then
   TRAIN_CMD+=("--dataloader.dataset_path" "$DATASET_PATH")
@@ -185,8 +180,6 @@ cat >&2 <<EOF
 [ARGS] DATASET_PATH      = ${DATASET_PATH:-<unset>}
 [ARGS] TRAINING_STEPS    = ${TRAINING_STEPS}
 [ARGS] SEQ_LEN           = ${SEQ_LEN}
-[ARGS] OPTIMIZER         = ${OPTIMIZER:-<config default>}
-[ARGS] FT_TRAINER        = ${FT_TRAINER}
 [ARGS] TORCHTITAN_ROOT   = ${TORCHTITAN_ROOT}
 [ARGS] HF_ASSETS_PATH    = ${HF_ASSETS_PATH}
 [ARGS] LOG_DIR           = ${LOG_DIR}

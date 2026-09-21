@@ -250,14 +250,14 @@ Both support single-node and multi-node modes.
 cd /lus/flare/projects/datascience/seonghapark/xpu_launcher
 
 # single node
-MODEL=/path/to/hf/model ./xpu_torchtitan/run_train_torchtitan.sh single --dry-run
+MODEL_PATH=/path/to/hf/model ./xpu_torchtitan/run_train_torchtitan.sh single --dry-run
 
 # multi node (hostfile optional inside a PBS job: PBS_NODEFILE is used)
-MODEL=/path/to/hf/model ./xpu_torchtitan/run_train_torchtitan.sh multi --dry-run
-MODEL=/path/to/hf/model ./xpu_torchtitan/run_train_torchtitan.sh multi /path/to/hosts --dry-run
+MODEL_PATH=/path/to/hf/model ./xpu_torchtitan/run_train_torchtitan.sh multi --dry-run
+MODEL_PATH=/path/to/hf/model ./xpu_torchtitan/run_train_torchtitan.sh multi /path/to/hosts --dry-run
 
-# real run-style example
-MODEL=/path/to/hf/Llama-3.1-8B \
+# Llama example
+MODEL_PATH=/path/to/hf/Llama-3.1-8B \
 MODULE=llama3 \
 CONFIG=llama3_8b \
 DATASET_NAME=c4 \
@@ -269,8 +269,9 @@ CKPT_FOLDER=checkpoint \
 
 Key env vars for `xpu_torchtitan/run_train_torchtitan.sh`:
 
-- `MODEL` **(required)**: path to the model/tokenizer assets directory
-  (forwarded to torchtitan as `--hf_assets_path`)
+- `MODEL` or `MODEL_PATH` **(required)**: path to the model/tokenizer assets
+	directory, forwarded as `--hf_assets_path`. `MODEL` takes precedence when
+	both are set.
 - `MODULE` (default: `llama3`; torchtitan config-registry module)
 - `CONFIG` (default: `llama3_debugmodel`; callable in that module's `config_registry.py`)
 - `HF_ASSETS_PATH` (optional override; default: `MODEL`)
@@ -281,6 +282,35 @@ Key env vars for `xpu_torchtitan/run_train_torchtitan.sh`:
 - `TRAINING_STEPS` (default: `100`)
 - `SEQ_LEN` (default: `16384`, passed as `--training.seq_len`)
 - `TORCHTITAN_ROOT` (default: `xpu_torchtitan/torchtitan_repo`)
+
+#### Loading the AGPT 2B DCP checkpoint
+
+`MODEL_PATH` and the DCP checkpoint have different roles:
+
+- `MODEL_PATH` supplies Hugging Face assets such as the tokenizer and
+	`config.json`. It does not select the TorchTitan model implementation.
+- `MODULE=agpt CONFIG=agpt_2b` selects the AGPT architecture and its training
+	configuration from `torchtitan.models.agpt.config_registry`.
+- `--checkpoint.initial_load_path` loads model weights from a TorchTitan
+	Distributed Checkpoint (DCP).
+
+```bash
+CKPT=/lus/flare/projects/AuroraGPT/foremans/runs/agpt-2b-v2/torchtitan-ezpz/outputs/checkpoints/agpt-2b-sophiag-olmo-mix-1124-n256-gbs6144/step-92859
+
+MODEL_PATH=/lus/flare/projects/datascience/seonghapark/agpt-2b-v2-256n-step-92859-safetensors \
+MODULE=agpt \
+CONFIG=agpt_2b \
+./xpu_torchtitan/run_train_torchtitan.sh multi -- \
+	--checkpoint.initial_load_path "$CKPT"
+```
+
+This is a model-only initialization, not a complete training resume. The old
+DCP contains SophiaG optimizer state, while the current `agpt_2b` core config
+uses AdamW. Do not pass `--checkpoint.initial_load_in_hf` for this DCP; that
+flag is for Hugging Face checkpoint loading.
+
+Gemma currently has no core `config_registry.py`, so it is not yet available
+through this generic TorchTitan Trainer path.
 
 #### `config_registry.py` is mandatory for every MODULE
 
