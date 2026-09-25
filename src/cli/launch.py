@@ -898,8 +898,6 @@ def _classify_attempt(
     effective_rc = shell_rc
     if shell_rc == 0 and inner_rc is not None and inner_rc != 0:
         effective_rc = inner_rc
-    elif shell_rc == 0 and crash:
-        effective_rc = 1
 
     def _result(reason: TerminationReason) -> ClassificationResult:
         return ClassificationResult(

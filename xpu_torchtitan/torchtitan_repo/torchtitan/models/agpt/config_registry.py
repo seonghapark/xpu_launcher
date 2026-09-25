@@ -138,22 +138,8 @@ def agpt(
     cfg.training.dtype = dtype
     cfg.dataloader.dataset = "pg19_multinews"
     cfg.dataloader.dataset_path = dataset_path
-    # Validator reads from the same blendcorpus corpus, but it pulls from
-    # the validation split (see BlendCorpusDataLoader.Config.serve_validation).
-    # Also default the validator's data_cache_path to the trainer's so it does
-    # not keep the bare ".cache/blendcorpus" default and cold-build the
-    # validation index at full scale on the first validate() call -- the race
-    # that crashed job 12469584 ("mmap length > file size" at TP>1, mistaken
-    # for a validator collective deadlock; see docs/guides/known-bugs/).
-    # NOTE: this only aligns the in-config DEFAULT. In production the submit
-    # scripts pass the warm path explicitly via
-    # --validator.dataloader.data-cache-path (applied by tyro AFTER this
-    # builder), which is the operative fix; this copy is defense-in-depth for
-    # interactive / non-script callers. Either way the validation-split index
-    # must be prewarmed (prewarm_blendcorpus_cache.sh builds it).
     if isinstance(cfg.validator.dataloader, HuggingFaceTextDataLoader.Config):
         cfg.validator.dataloader.dataset_path = dataset_path
-        cfg.validator.dataloader.data_cache_path = cfg.dataloader.data_cache_path
     cfg.metrics.log_freq = 1
     cfg.metrics.enable_wandb = True
     if compile:
@@ -413,6 +399,34 @@ def ezpz_agpt_80b_deep_alt() -> Trainer.Config:
 
 def agpt_80b_deep_alt() -> Trainer.Config:
     return agpt("80B_deep_alt", tensor_parallel_degree=2)
+
+
+def agpt_2b_yarn(seq_len: int = 32768) -> Trainer.Config:
+    """Continue-pretrain agpt-2b with YaRN-scaled RoPE for context extension.
+
+    Loads the existing agpt-2b model weights from HF format
+    (via --model.hf_assets_path) and fine-tunes at a longer seq_len than the
+    original 8192 pretraining length. Per the YaRN paper (arxiv.org/abs/2309.00071),
+    only a small number of additional steps (~400) at the target length are needed
+    for effective context extension.
+    """
+    return agpt("2b_yarn", seq_len=seq_len, activation_checkpoint_mode="none")
+
+
+def agpt_20b_yarn(seq_len: int = 32768) -> Trainer.Config:
+    """Continue-pretrain agpt-20b with YaRN-scaled RoPE for context extension.
+
+    See agpt_2b_yarn for details.
+    """
+    return agpt("20b_yarn", seq_len=seq_len)
+
+
+def ezpz_agpt_2b_yarn(seq_len: int = 32768) -> Trainer.Config:
+    return agpt_2b_yarn(seq_len=seq_len)
+
+
+def ezpz_agpt_20b_yarn(seq_len: int = 32768) -> Trainer.Config:
+    return agpt_20b_yarn(seq_len=seq_len)
 
 
 def ezpz_agpt_80b_from_json() -> Trainer.Config:

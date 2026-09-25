@@ -88,7 +88,11 @@ Important environment variables:
 | `TRAINING_STEPS` | Training steps, default `100` |
 | `LOG_DIR` | TorchTitan dump directory |
 | `CKPT_FOLDER` | Checkpoint output folder under `LOG_DIR`, default `checkpoint` |
+| `CKPT` | Optional DCP input directory, forwarded as `--checkpoint.initial_load_path` |
 | `TORCHTITAN_ROOT` | Vendored TorchTitan root |
+
+Supported dataset names include `PG19` (standalone PG19), `pg19_multinews`,
+`c4`, and `c4_test`. Dataset names are normalized to lowercase.
 
 Launch topology and recovery are controlled by `NPROC_PER_NODE`, `NNODES`,
 `NPROC`, `SCHEDULER`, `AUTO_RETRY`, `SPARE_NODES`, `FAILOVER_PROFILE`, and
@@ -101,7 +105,8 @@ detection does not choose this value automatically.
 The model assets directory and a Distributed Checkpoint (DCP) are separate:
 
 - `MODEL_PATH` provides configuration and tokenizer assets.
-- `--checkpoint.initial_load_path` provides DCP model weights.
+- `CKPT` provides DCP model weights and is forwarded as
+  `--checkpoint.initial_load_path`.
 - `MODULE=agpt CONFIG=agpt_2b` ensures those weights are loaded into the
   matching architecture.
 
@@ -111,8 +116,8 @@ CKPT=/lus/flare/projects/AuroraGPT/foremans/runs/agpt-2b-v2/torchtitan-ezpz/outp
 MODEL_PATH=/lus/flare/projects/datascience/seonghapark/agpt-2b-v2-256n-step-92859-safetensors \
 MODULE=agpt \
 CONFIG=agpt_2b \
-./run_train_torchtitan.sh multi -- \
-  --checkpoint.initial_load_path "$CKPT"
+DATASET_NAME=PG19 \
+./run_train_torchtitan.sh multi -- --training.steps 10
 ```
 
 This command performs model-only initialization. It is not a full resume of

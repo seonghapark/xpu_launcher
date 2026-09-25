@@ -52,12 +52,13 @@ CKPT=/lus/flare/projects/AuroraGPT/foremans/runs/agpt-2b-v2/torchtitan-ezpz/outp
 MODEL_PATH=/lus/flare/projects/datascience/seonghapark/agpt-2b-v2-256n-step-92859-safetensors \
 MODULE=agpt \
 CONFIG=agpt_2b \
-./run_train_torchtitan.sh multi -- \
-	--checkpoint.initial_load_path "$CKPT"
+DATASET_NAME=PG19 \
+./run_train_torchtitan.sh multi -- --training.steps 10
 ```
 
 `MODEL_PATH` contains model/tokenizer assets. `MODULE` and `CONFIG` select the
-TorchTitan architecture. The DCP path supplies model weights. This is
+TorchTitan architecture. `CKPT` is forwarded as
+`--checkpoint.initial_load_path` and supplies DCP model weights. This is
 model-only initialization because the old checkpoint's SophiaG optimizer state
 does not match the current AdamW configuration.
 

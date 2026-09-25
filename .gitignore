@@ -5,3 +5,4 @@ outputs/
 *.gguf
 *.safetensors
 examples/
+run.log

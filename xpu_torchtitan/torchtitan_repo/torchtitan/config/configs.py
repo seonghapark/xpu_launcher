@@ -80,6 +80,15 @@ class TrainingConfig:
     many temporary files.
     """
 
+    enable_loss_std_termination: bool = False
+    """Enable early termination when loss standard deviation drops below threshold"""
+
+    loss_std_threshold: float = 0.001
+    """Threshold for loss standard deviation convergence criterion"""
+
+    loss_std_window: int = 50
+    """Window size (number of steps) for computing loss standard deviation"""
+
 
 @dataclass(kw_only=True, slots=True)
 class ParallelismConfig:

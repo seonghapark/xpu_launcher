@@ -8,6 +8,9 @@ import logging
 import re
 from typing import Any
 
+import torch
+from torch.distributed.tensor import DTensor
+
 logger = logging.getLogger()
 
 from torchtitan.models.common.rope import ComplexRoPE
@@ -43,7 +46,25 @@ class Llama3StateDictAdapter(StateDictAdapter):
         }
 
     # HuggingFace permutation function (exact copy from their conversion script)
+    # Modified to handle FSDP-sharded tensors during reshape operations
     def _permute(self, w, n_heads_arg, dim1=None, dim2=None):
+        """
+        Permute tensor weights for RoPE compatibility.
+        Handles both replicated and FSDP-sharded tensor inputs.
+
+        Args:
+            w: Tensor to permute (may be distributed)
+            n_heads_arg: Number of attention heads
+            dim1: First dimension (defaults to w.shape[0])
+            dim2: Second dimension (defaults to w.shape[1])
+
+        Returns:
+            Permuted tensor
+        """
+        # Convert FSDP-sharded tensor to local to avoid sharding issues during reshape
+        if isinstance(w, DTensor):
+            w = w.to_local()
+
         if dim1 is None:
             dim1 = w.shape[0]
         if dim2 is None:
@@ -56,6 +77,14 @@ class Llama3StateDictAdapter(StateDictAdapter):
         )
 
     def _reverse_permute(self, w, n_heads_arg, dim1=None, dim2=None):
+        """
+        Reverse the RoPE permutation operation.
+        Handles both replicated and FSDP-sharded tensor inputs.
+        """
+        # Convert FSDP-sharded tensor to local to avoid sharding issues during reshape
+        if isinstance(w, DTensor):
+            w = w.to_local()
+
         if dim1 is None:
             dim1 = w.shape[0]
         if dim2 is None:

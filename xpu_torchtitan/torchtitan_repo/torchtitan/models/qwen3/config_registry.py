@@ -412,7 +412,7 @@ def sft_qwen3_8b_math() -> Trainer.Config:
         ),
         checkpoint=CheckpointManager.Config(
             enable=True,
-            initial_load_in_hf=True,
+            load_hf_model=True,
         ),
         activation_checkpoint=SelectiveAC.Config(),
     )

@@ -25,6 +25,20 @@ def test_shell_success_with_inner_nonzero_is_failure() -> None:
     assert result.reason is launch.TerminationReason.BAD_NODE_BLIND
 
 
+def test_shell_success_with_benign_aurora_crash_keyword_is_success() -> None:
+    log_text = "Training completed with XCCL backend\n"
+    result = launch._classify_attempt(
+        0,
+        log_text,
+        [],
+        profile="aurora",
+        prior_attempt_had_progress=True,
+        has_spares=False,
+        consecutive_unattributed=0,
+    )
+    assert result.reason is launch.TerminationReason.SUCCESS
+
+
 def test_walltime_without_crash_is_walltime() -> None:
     log_text = "rank 7 died from signal 15\njob wall clock limit\n"
     result = launch._classify_attempt(

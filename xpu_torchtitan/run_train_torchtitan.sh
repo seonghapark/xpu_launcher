@@ -13,8 +13,8 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  run_train_torchtitan.sh single [--dry-run] [-- <extra torchtitan args...>]
-  run_train_torchtitan.sh multi [hostfile] [--dry-run] [-- <extra torchtitan args...>]
+  run_train_torchtitan.sh single [--dry-run] [--resource-monitor] [-- <extra torchtitan args...>]
+  run_train_torchtitan.sh multi [hostfile] [--dry-run] [--resource-monitor] [-- <extra torchtitan args...>]
                           (hostfile optional inside a PBS job: PBS_NODEFILE is used)
 
 Core env variables:
@@ -32,6 +32,12 @@ Core env variables:
   CKPT_FOLDER         (default: checkpoint)
   TRAINING_STEPS      (default: 100)
   TORCHTITAN_ROOT     (default: <this script dir>/torchtitan_repo)
+  RESOURCE_MONITOR    (default: 0; set to 1 or pass --resource-monitor)
+  RESOURCE_INTERVAL   (default: 5 seconds)
+  RESOURCE_OUTPUT_DIR (default: LOG_DIR/resource_metrics)
+  LOSS_STD_TERMINATION_ENABLED (default: 0; set to 1 to enable early termination on loss convergence)
+  LOSS_STD_THRESHOLD  (default: 0.001; threshold for loss std convergence)
+  LOSS_STD_WINDOW     (default: 50; window size for computing loss standard deviation)
 
 Launch env variables (handled by run_train.sh):
   XPU_CMD, PYTHON_BIN, SCHEDULER, NPROC_PER_NODE, NNODES, NPROC,
@@ -58,11 +64,37 @@ shift
 
 DRY_RUN=0
 HOSTFILE=""
+RESOURCE_MONITOR="${RESOURCE_MONITOR:-0}"
+RESOURCE_INTERVAL="${RESOURCE_INTERVAL:-5}"
+RESOURCE_OUTPUT_DIR="${RESOURCE_OUTPUT_DIR:-}"
+LOSS_STD_TERMINATION_ENABLED="${LOSS_STD_TERMINATION_ENABLED:-0}"
+LOSS_STD_THRESHOLD="${LOSS_STD_THRESHOLD:-0.001}"
+LOSS_STD_WINDOW="${LOSS_STD_WINDOW:-50}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)
       DRY_RUN=1
       shift
+      ;;
+    --resource-monitor)
+      RESOURCE_MONITOR=1
+      shift
+      ;;
+    --resource-interval)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --resource-interval requires seconds" >&2
+        exit 1
+      fi
+      RESOURCE_INTERVAL="$2"
+      shift 2
+      ;;
+    --resource-output-dir)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --resource-output-dir requires a path" >&2
+        exit 1
+      fi
+      RESOURCE_OUTPUT_DIR="$2"
+      shift 2
       ;;
     --)
       break
@@ -110,6 +142,17 @@ if [[ "${1:-}" == "--" ]]; then
   EXTRA_ARGS=("$@")
 fi
 
+has_extra_arg() {
+  local option="$1"
+  local arg
+  for arg in "${EXTRA_ARGS[@]}"; do
+    if [[ "$arg" == "$option" || "$arg" == "$option="* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 TORCHTITAN_ROOT="${TORCHTITAN_ROOT:-${SCRIPT_DIR}/torchtitan_repo}"
 # MODEL: required path to model/tokenizer assets, forwarded as --hf_assets_path
 MODEL="${MODEL:-${MODEL_PATH:-}}"
@@ -130,6 +173,7 @@ HF_ASSETS_PATH="${HF_ASSETS_PATH:-${MODEL}}"
 DATASET_NAME="${DATASET_NAME:-pg19_multinews}"
 DATASET_PATH="${DATASET_PATH:-}"
 LOG_DIR="${LOG_DIR:-${TORCHTITAN_ROOT}/outputs/xpu_torchtitan_$(date +%Y%m%d_%H%M%S)}"
+RESOURCE_OUTPUT_DIR="${RESOURCE_OUTPUT_DIR:-${LOG_DIR}/resource_metrics}"
 CKPT_FOLDER="${CKPT_FOLDER:-checkpoint}"
 TRAINING_STEPS="${TRAINING_STEPS:-100}"
 SEQ_LEN="${SEQ_LEN:-16384}"
@@ -151,11 +195,27 @@ TRAIN_CMD=(
   "--hf_assets_path" "$HF_ASSETS_PATH"
   "--dump_folder" "$LOG_DIR"
   "--dataloader.dataset" "$DATASET_NAME"
-  "--training.steps" "$TRAINING_STEPS"
-  "--training.seq_len" "$SEQ_LEN"
   "--checkpoint.enable"
   "--checkpoint.folder" "$CKPT_FOLDER"
 )
+
+if ! has_extra_arg "--training.steps"; then
+  TRAIN_CMD+=("--training.steps" "$TRAINING_STEPS")
+fi
+if ! has_extra_arg "--training.seq_len"; then
+  TRAIN_CMD+=("--training.seq_len" "$SEQ_LEN")
+fi
+if ! has_extra_arg "--training.enable_loss_std_termination"; then
+  if [[ "$LOSS_STD_TERMINATION_ENABLED" == "1" ]]; then
+    TRAIN_CMD+=("--training.enable_loss_std_termination")
+  fi
+fi
+if ! has_extra_arg "--training.loss_std_threshold"; then
+  TRAIN_CMD+=("--training.loss_std_threshold=$LOSS_STD_THRESHOLD")
+fi
+if ! has_extra_arg "--training.loss_std_window"; then
+  TRAIN_CMD+=("--training.loss_std_window=$LOSS_STD_WINDOW")
+fi
 
 if [[ -n "$DATASET_PATH" ]]; then
   TRAIN_CMD+=("--dataloader.dataset_path" "$DATASET_PATH")
@@ -165,6 +225,20 @@ if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
   TRAIN_CMD+=("${EXTRA_ARGS[@]}")
 fi
 
+if [[ "$RESOURCE_MONITOR" == "1" ]]; then
+  RESOURCE_MONITOR_SCRIPT="${SCRIPT_DIR}/../src/xpu_launch/resource_monitor.py"
+  if [[ ! -f "$RESOURCE_MONITOR_SCRIPT" ]]; then
+    echo "error: resource monitor not found: $RESOURCE_MONITOR_SCRIPT" >&2
+    exit 1
+  fi
+  TRAIN_CMD=(
+    "$TRAIN_PYTHON_BIN" "$RESOURCE_MONITOR_SCRIPT"
+    "--output-dir" "$RESOURCE_OUTPUT_DIR"
+    "--interval" "$RESOURCE_INTERVAL"
+    "${TRAIN_CMD[@]}"
+  )
+fi
+
 if [[ ! -d "$TORCHTITAN_ROOT" ]]; then
   echo "error: TORCHTITAN_ROOT not found: $TORCHTITAN_ROOT" >&2
   exit 1
@@ -172,18 +246,31 @@ fi
 
 cd "$TORCHTITAN_ROOT"
 
+TRAINING_STEPS_NOTE=""
+SEQ_LEN_NOTE=""
+if has_extra_arg "--training.steps"; then
+  TRAINING_STEPS_NOTE=" (overridden by extra args)"
+fi
+if has_extra_arg "--training.seq_len"; then
+  SEQ_LEN_NOTE=" (overridden by extra args)"
+fi
+
 cat >&2 <<EOF
 [ARGS] mode              = ${MODE}$( [[ "$MODE" == "multi" ]] && echo " (hostfile=${HOSTFILE:-auto from PBS_NODEFILE})" )
 [ARGS] MODEL             = ${MODEL}
 [ARGS] MODULE/CONFIG     = ${MODULE} / ${CONFIG}
 [ARGS] DATASET_NAME      = ${DATASET_NAME}
 [ARGS] DATASET_PATH      = ${DATASET_PATH:-<unset>}
-[ARGS] TRAINING_STEPS    = ${TRAINING_STEPS}
-[ARGS] SEQ_LEN           = ${SEQ_LEN}
+[ARGS] TRAINING_STEPS    = ${TRAINING_STEPS}${TRAINING_STEPS_NOTE}
+[ARGS] SEQ_LEN           = ${SEQ_LEN}${SEQ_LEN_NOTE}
 [ARGS] TORCHTITAN_ROOT   = ${TORCHTITAN_ROOT}
 [ARGS] HF_ASSETS_PATH    = ${HF_ASSETS_PATH}
 [ARGS] LOG_DIR           = ${LOG_DIR}
 [ARGS] CKPT_FOLDER       = ${CKPT_FOLDER}
+[ARGS] CKPT              = ${CKPT:-<unset>}
+[ARGS] RESOURCE_MONITOR  = ${RESOURCE_MONITOR}
+[ARGS] RESOURCE_INTERVAL = ${RESOURCE_INTERVAL}
+[ARGS] RESOURCE_OUTPUT   = ${RESOURCE_OUTPUT_DIR}
 [ARGS] TRAIN_PYTHON_BIN  = ${TRAIN_PYTHON_BIN}
 [ARGS] topology          = NNODES=${NNODES:-auto} NPROC_PER_NODE=${NPROC_PER_NODE:-4} NPROC=${NPROC:-auto} SPARE_NODES=${SPARE_NODES:-auto} AUTO_RETRY=${AUTO_RETRY:-1(multi)}
 [ARGS] extra train args  = ${EXTRA_ARGS[*]:-<none>}

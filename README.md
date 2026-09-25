@@ -276,12 +276,16 @@ Key env vars for `xpu_torchtitan/run_train_torchtitan.sh`:
 - `CONFIG` (default: `llama3_debugmodel`; callable in that module's `config_registry.py`)
 - `HF_ASSETS_PATH` (optional override; default: `MODEL`)
 - `DATASET_NAME` (default: `pg19_multinews` — PG19+MultiNews interleaved, HF streaming; `c4_test` = offline bundled sample)
+- `DATASET_NAME=PG19` selects the standalone PG19 stream (dataset names are
+	normalized to lowercase by the loader)
 - `DATASET_PATH` (optional)
 - `LOG_DIR` (default: `xpu_torchtitan/torchtitan_repo/outputs/xpu_torchtitan_<timestamp>`)
 - `CKPT_FOLDER` (default: `checkpoint`)
 - `TRAINING_STEPS` (default: `100`)
 - `SEQ_LEN` (default: `16384`, passed as `--training.seq_len`)
 - `TORCHTITAN_ROOT` (default: `xpu_torchtitan/torchtitan_repo`)
+- `CKPT` (optional): DCP directory forwarded as
+	`--checkpoint.initial_load_path`
 
 #### Loading the AGPT 2B DCP checkpoint
 
@@ -291,8 +295,8 @@ Key env vars for `xpu_torchtitan/run_train_torchtitan.sh`:
 	`config.json`. It does not select the TorchTitan model implementation.
 - `MODULE=agpt CONFIG=agpt_2b` selects the AGPT architecture and its training
 	configuration from `torchtitan.models.agpt.config_registry`.
-- `--checkpoint.initial_load_path` loads model weights from a TorchTitan
-	Distributed Checkpoint (DCP).
+- `CKPT` loads model weights from a TorchTitan Distributed Checkpoint (DCP) by
+	forwarding it as `--checkpoint.initial_load_path`.
 
 ```bash
 CKPT=/lus/flare/projects/AuroraGPT/foremans/runs/agpt-2b-v2/torchtitan-ezpz/outputs/checkpoints/agpt-2b-sophiag-olmo-mix-1124-n256-gbs6144/step-92859
@@ -300,8 +304,8 @@ CKPT=/lus/flare/projects/AuroraGPT/foremans/runs/agpt-2b-v2/torchtitan-ezpz/outp
 MODEL_PATH=/lus/flare/projects/datascience/seonghapark/agpt-2b-v2-256n-step-92859-safetensors \
 MODULE=agpt \
 CONFIG=agpt_2b \
-./xpu_torchtitan/run_train_torchtitan.sh multi -- \
-	--checkpoint.initial_load_path "$CKPT"
+DATASET_NAME=PG19 \
+./xpu_torchtitan/run_train_torchtitan.sh multi -- --training.steps 10
 ```
 
 This is a model-only initialization, not a complete training resume. The old

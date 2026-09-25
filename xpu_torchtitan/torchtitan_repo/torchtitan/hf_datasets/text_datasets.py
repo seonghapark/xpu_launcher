@@ -34,6 +34,18 @@ def _process_c4_text(sample: dict[str, Any]) -> str:
     return sample["text"]
 
 
+def _load_pg19_dataset(dataset_path: str, split: str = "train"):
+    try:
+        return load_dataset(dataset_path, split=split, streaming=True)
+    except RuntimeError:
+        return load_dataset(
+            dataset_path,
+            revision="refs/convert/parquet",
+            split=split,
+            streaming=True,
+        )
+
+
 def _load_pg19_multinews(dataset_path: str, split: str = "train"):
     """Interleave PG19 (books) and MultiNews (news) streams.
 
@@ -58,7 +70,7 @@ def _load_pg19_multinews(dataset_path: str, split: str = "train"):
     pg19_id, _, multinews_id = (dataset_path or "").partition("+")
     pg19_id = pg19_id or "emozilla/pg19"
     multinews_id = multinews_id or "alexfabbri/multi_news"
-    pg19 = _load_streaming(pg19_id)
+    pg19 = _load_pg19_dataset(pg19_id, split)
     multinews = _load_streaming(multinews_id)
     return interleave_datasets(
         [pg19, multinews], stopping_strategy="all_exhausted"
@@ -89,6 +101,11 @@ DATASETS = {
     "c4_validation": DatasetConfig(
         path="allenai/c4",
         loader=partial(_load_c4_dataset, split="validation"),
+        sample_processor=_process_c4_text,
+    ),
+    "pg19": DatasetConfig(
+        path="emozilla/pg19",
+        loader=partial(_load_pg19_dataset, split="train"),
         sample_processor=_process_c4_text,
     ),
     "pg19_multinews": DatasetConfig(

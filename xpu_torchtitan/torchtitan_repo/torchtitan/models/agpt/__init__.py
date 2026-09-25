@@ -344,6 +344,11 @@ def _build_agpt_config(
     qk_norm: bool = False,
     logit_softcap: float | None = None,
     relu_squared: bool = False,
+    # YaRN parameters (only apply when scaling="yarn")
+    rope_factor: float = 1.0,
+    beta_fast: float = 32.0,
+    beta_slow: float = 1.0,
+    original_seq_len: int = 4096,
 ) -> AgptModel.Config:
     # PR #3458 (RoPE refactor): RoPE.Config split into ComplexRoPE.Config /
     # CosSinRoPE.Config; the backend= field is gone (backend is encoded in
@@ -359,6 +364,10 @@ def _build_agpt_config(
         max_seq_len=max_seq_len,
         theta=rope_theta,
         scaling=scaling,
+        rope_factor=rope_factor,
+        beta_fast=beta_fast,
+        beta_slow=beta_slow,
+        original_seq_len=original_seq_len,
     )
     return AgptModel.Config(
         dim=dim,
@@ -613,6 +622,43 @@ agpt_configs = {
         vocab_size=256128,
         hidden_dim=28668,  # 28672 -> 28668 (multiple of 12)
     ),
+    # YaRN-scaled flavors for context extension via continued pretraining.
+    # Per arxiv.org/abs/2309.00071, apply YaRN scaling to checkpoint trained
+    # at original_seq_len (8192 for these models), then fine-tune briefly
+    # (~400 steps) at the extended max_seq_len (262144 = 2x extension target).
+    # Use rope_backend="cos_sin" to get mscale attention-temperature correction.
+    "2B_yarn": _build_agpt_config(
+        dim=2048,
+        n_layers=12,
+        n_heads=16,
+        n_kv_heads=4,
+        rope_theta=50000,
+        vocab_size=256128,
+        hidden_dim=11008,
+        rope_backend="cos_sin",
+        scaling="yarn",
+        max_seq_len=262144,
+        original_seq_len=8192,
+        rope_factor=32.0,
+        beta_fast=1.0,
+        beta_slow=32.0,
+    ),
+    "20B_yarn": _build_agpt_config(
+        dim=5120,
+        n_layers=64,
+        n_heads=40,
+        n_kv_heads=8,
+        rope_theta=500000,
+        vocab_size=256128,
+        hidden_dim=compute_ffn_hidden_dim(5120, multiple_of=1024),
+        rope_backend="cos_sin",
+        scaling="yarn",
+        max_seq_len=262144,
+        original_seq_len=8192,
+        rope_factor=32.0,
+        beta_fast=1.0,
+        beta_slow=32.0,
+    ),
 }
 
 
@@ -635,6 +681,8 @@ agpt_configs["2b_qknorm"] = agpt_configs["2B_qknorm"]
 agpt_configs["2b_softcap"] = agpt_configs["2B_softcap"]
 agpt_configs["2b_relu2"] = agpt_configs["2B_relu2"]
 agpt_configs["2b_kitchen_sink"] = agpt_configs["2B_kitchen_sink"]
+agpt_configs["2b_yarn"] = agpt_configs["2B_yarn"]
+agpt_configs["20b_yarn"] = agpt_configs["20B_yarn"]
 
 
 def model_registry(
