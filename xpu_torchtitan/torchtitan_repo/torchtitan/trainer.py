@@ -179,7 +179,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful, Configurable):
                     self.dump_folder, self.debug.save_config_file
                 )
                 if torch.distributed.is_initialized():
-                    if torch.distributed.get_rank() == 0:
+                    if dist_utils.get_rank() == 0:
                         os.makedirs(os.path.dirname(config_file), exist_ok=True)
                         with open(config_file, "w") as f:
                             json.dump(self.to_dict(), f, indent=2)
@@ -506,8 +506,23 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful, Configurable):
         # Initialize training time tracking
         self.training_start_time = None
 
-        # build tokenizer
-        self.tokenizer = config.tokenizer.build(tokenizer_path=config.hf_assets_path)
+        # build tokenizer with rank 0 priority (download once, all ranks read from cache)
+        rank = dist_utils.get_rank()
+        if rank == 0:
+            # Rank 0: Download and cache model assets
+            self.tokenizer = config.tokenizer.build(
+                tokenizer_path=config.hf_assets_path,
+                local_files_only=False  # Allow network download
+            )
+        # All ranks: Wait for rank 0 to complete download
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
+        if rank != 0:
+            # Other ranks: Load from cached files only (no network fallback)
+            self.tokenizer = config.tokenizer.build(
+                tokenizer_path=config.hf_assets_path,
+                local_files_only=True  # Local files only, fail fast if not found
+            )
 
         # build dataloader
         self.dataloader = config.dataloader.build(
@@ -885,7 +900,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful, Configurable):
             if len(self.loss_history) >= self.config.training.loss_std_window:
                 import numpy as np
                 loss_std = float(np.std(list(self.loss_history)))
-                if torch.distributed.is_initialized() and torch.distributed.get_rank() == 0:
+                if torch.distributed.is_initialized() and dist_utils.get_rank() == 0:
                     logger.info(
                         f"Step {self.step}: loss_std={loss_std:.6f} "
                         f"(threshold={self.config.training.loss_std_threshold:.6f})"
@@ -927,11 +942,11 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful, Configurable):
                         break
 
                     is_last_step = (self.step == config.training.steps)
-                    # Also mark as last step if we're about to hit 5-hour limit
+                    # Also mark as last step if we're about to hit duration limit
                     if not is_last_step and self.training_start_time is not None:
                         elapsed_seconds = time.time() - self.training_start_time
-                        five_hours_seconds = 5 * 3600
-                        is_last_step = elapsed_seconds >= five_hours_seconds
+                        max_duration_seconds = config.training.max_duration_hours * 3600
+                        is_last_step = elapsed_seconds >= max_duration_seconds
 
                     self.checkpointer.save(
                         self.step,
@@ -958,7 +973,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful, Configurable):
                             parallel_dims=self.parallel_dims,
                         )
 
-        if torch.distributed.get_rank() == 0:
+        if dist_utils.get_rank() == 0:
             logger.info("Sleeping 2 seconds for other ranks to complete")
             time.sleep(2)
 
@@ -972,16 +987,17 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful, Configurable):
             if self._check_loss_std_convergence():
                 return False
 
-        # Check if training has exceeded 5 hours
+        # Check if training has exceeded duration limit
         if self.training_start_time is not None:
             elapsed_seconds = time.time() - self.training_start_time
-            five_hours_seconds = 5 * 3600
-            if elapsed_seconds >= five_hours_seconds:
-                if torch.distributed.is_initialized() and torch.distributed.get_rank() == 0:
+            max_duration_seconds = self.config.training.max_duration_hours * 3600
+            if elapsed_seconds >= max_duration_seconds:
+                if torch.distributed.is_initialized() and dist_utils.get_rank() == 0:
                     hours = elapsed_seconds / 3600
+                    max_hours = self.config.training.max_duration_hours
                     logger.info(
-                        f"Training duration reached {hours:.2f} hours (5 hour limit); "
-                        f"stopping at step {self.step}"
+                        f"Training duration reached {hours:.2f} hours "
+                        f"({max_hours:.1f} hour limit); stopping at step {self.step}"
                     )
                 return False
 
@@ -998,7 +1014,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful, Configurable):
         if loss_std <= threshold:
             if self.loss_std_convergence_step is None:
                 self.loss_std_convergence_step = self.step
-                if torch.distributed.is_initialized() and torch.distributed.get_rank() == 0:
+                if torch.distributed.is_initialized() and dist_utils.get_rank() == 0:
                     logger.info(
                         f"Loss converged at step {self.step}: loss_std={loss_std:.6f} <= "
                         f"threshold={threshold:.6f}"

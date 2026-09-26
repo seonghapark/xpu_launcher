@@ -89,6 +89,9 @@ class TrainingConfig:
     loss_std_window: int = 50
     """Window size (number of steps) for computing loss standard deviation"""
 
+    max_duration_hours: float = 4.0
+    """Maximum training duration in hours before automatic termination (default: 4 hours)"""
+
 
 @dataclass(kw_only=True, slots=True)
 class ParallelismConfig:

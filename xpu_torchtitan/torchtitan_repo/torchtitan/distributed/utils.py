@@ -47,6 +47,16 @@ def get_spmd_backend() -> str:
     return _spmd_backend
 
 
+def get_rank() -> int:
+    """Get the current rank in distributed training.
+
+    Returns the rank if distributed is initialized, otherwise returns 0.
+    """
+    if dist.is_initialized():
+        return dist.get_rank()
+    return 0
+
+
 def check_dtensor_placements_match(
     actual: tuple[Placement, ...],
     expected: tuple[Placement, ...],

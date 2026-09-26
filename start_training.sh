@@ -49,7 +49,9 @@ ENVIRONMENT:
   Examples:
     CKPT=/path/to/checkpoint
     SEQ_LEN=16384
-    NPROC_PER_NODE=4
+    NPROC=36 (optional, auto-detected if not set)
+
+  Note: NPROC_PER_NODE is auto-detected from XPU device count
 
 EXAMPLE:
   ./start_training.sh --mode single \

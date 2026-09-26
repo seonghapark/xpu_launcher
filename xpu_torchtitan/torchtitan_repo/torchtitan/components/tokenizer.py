@@ -119,9 +119,11 @@ class HuggingFaceTokenizer(BaseTokenizer):
         config: Config | None = None,
         *,
         tokenizer_path: str,
+        local_files_only: bool = False,
     ):
         super().__init__()
         self.tokenizer_path = tokenizer_path
+        self.local_files_only = local_files_only
 
         # Initialize BOS/EOS token attributes (frequently used)
         self.bos_id = None
@@ -130,7 +132,7 @@ class HuggingFaceTokenizer(BaseTokenizer):
         self.eos_token = None
 
         # Load the underlying tokenizer
-        self.tokenizer = self._load_tokenizer_from_path(tokenizer_path)
+        self.tokenizer = self._load_tokenizer_from_path(tokenizer_path, local_files_only=local_files_only)
 
         # Load configuration files
         self._hf_config = self._load_config(
@@ -166,19 +168,25 @@ class HuggingFaceTokenizer(BaseTokenizer):
                 return json.load(f)
         return None
 
-    def _load_tokenizer_from_path(self, tokenizer_path: str) -> Tokenizer:
-        """Load tokenizer from various file formats."""
+    def _load_tokenizer_from_path(self, tokenizer_path: str, local_files_only: bool = False) -> Tokenizer:
+        """Load tokenizer from various file formats.
+
+        Args:
+            tokenizer_path (str): Path to tokenizer directory
+            local_files_only (bool): If True, only load from local cache (no network fallback).
+                                    Raises FileNotFoundError if files don't exist locally.
+        """
         if not os.path.exists(tokenizer_path):
+            error_msg = f"Tokenizer path '{tokenizer_path}' does not exist"
+            if local_files_only:
+                error_msg += " (local_files_only=True, no network fallback available)"
             if "assets/tokenizer" in tokenizer_path:
-                raise FileNotFoundError(
+                error_msg = (
                     "Detected ./assets/tokenizer path which was deprecated in https://github.com/pytorch/torchtitan/pull/1540.\n"
                     "Remove --model.tokenizer_path and download to --model.hf_assets_path using ./scripts/download_hf_assets.py\n"
                     "See example: https://github.com/pytorch/torchtitan/tree/main/torchtitan/models/deepseek_v3#download-tokenizer"
                 )
-            else:
-                raise FileNotFoundError(
-                    f"Tokenizer path '{tokenizer_path}' does not exist"
-                )
+            raise FileNotFoundError(error_msg)
 
         # Define paths for different tokenizer file types
         tokenizer_json_path = os.path.join(tokenizer_path, "tokenizer.json")

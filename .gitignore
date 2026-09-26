@@ -6,3 +6,4 @@ outputs/
 *.safetensors
 examples/
 run.log
+resource_metrics*/
