@@ -9,18 +9,19 @@ usage() {
   cat <<'EOF'
 Usage:
   run_train.sh single [--dry-run] [-- <train command...>]
-  run_train.sh multi <hostfile> [--dry-run] [-- <train command...>]
+  run_train.sh multi [hostfile] [--dry-run] [-- <train command...>]
 
 Examples:
   ./run_train.sh single -- python train.py --epochs 1
+  ./run_train.sh multi -- python train.py --epochs 1
   ./run_train.sh multi ./hosts.txt -- python train.py --epochs 1
-  NPROC=24 ./run_train.sh multi ./hosts.txt -- python train.py --epochs 1
+  NPROC=24 ./run_train.sh multi -- python train.py --epochs 1
 
 Environment overrides:
   XPU_CMD                    (default: xpu)
-  SCHEDULER                  (default: auto)
-  NNODES                     (multi only, default: derived from hostfile unique lines)
-  NPROC                      (default: NNODES * detected_devices for multi, else detected_devices)
+  SCHEDULER                  (default: auto; auto-detects PBS/SLURM)
+  NNODES                     (multi only, default: auto-detect from scheduler or hostfile)
+  NPROC                      (default: auto-calculated from NNODES * devices, or inferred by scheduler)
   AUTO_RETRY                 (default: 1, used for multi)
   SPARE_NODES_PERCENTAGE     (multi only, calculate spare as percentage of total available nodes)
   SPARE_NODES                (explicit spare nodes, overrides percentage calculation)
@@ -29,15 +30,28 @@ Environment overrides:
 
 Note: NPROC_PER_NODE is auto-detected from XPU device count (12 devices per Aurora node)
 
-Examples:
-  # Use all 49 nodes as computing nodes
-  ./run_train.sh multi hostfile.txt -- python train.py
+Topology resolution (in order):
+  1. Explicit hostfile if provided
+  2. PBS_NODEFILE if running inside PBS job
+  3. SLURM environment (SLURM_NODELIST, SLURM_JOB_ID) if using SLURM scheduler
+  4. User-supplied NNODES/NPROC environment variables
+  5. xpu launch auto-detection
 
-  # Use 49 nodes with 20% as spare (39 computing + 10 spare)
-  SPARE_NODES_PERCENTAGE=20 ./run_train.sh multi hostfile.txt -- python train.py
+Examples:
+  # Inside a PBS job (auto-detects from PBS_NODEFILE)
+  ./run_train.sh multi -- python train.py
+
+  # With explicit hostfile
+  ./run_train.sh multi ./hosts.txt -- python train.py
+
+  # With explicit node count
+  NNODES=20 ./run_train.sh multi -- python train.py
+
+  # With hostfile + 20% spare nodes
+  SPARE_NODES_PERCENTAGE=20 ./run_train.sh multi ./hosts.txt -- python train.py
 
   # Explicit: 39 computing nodes + 10 spare
-  NNODES=39 SPARE_NODES=10 ./run_train.sh multi hostfile.txt -- python train.py
+  NNODES=39 SPARE_NODES=10 ./run_train.sh multi -- python train.py
 EOF
 }
 
@@ -77,17 +91,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$MODE" == "multi" ]]; then
-  if [[ -z "$HOSTFILE" ]]; then
-    if [[ -n "${PBS_NODEFILE:-}" && -f "${PBS_NODEFILE}" ]]; then
-      HOSTFILE="$(mktemp /tmp/xpu_hosts.XXXXXX)"
-      awk 'NF {print $1}' "$PBS_NODEFILE" | sort -u > "$HOSTFILE"
-      echo "[INFO] multi mode: derived hostfile from PBS_NODEFILE ($(wc -l < "$HOSTFILE") nodes)" >&2
-    else
-      echo "error: multi mode requires <hostfile> (or run inside a PBS job with PBS_NODEFILE)" >&2
-      exit 1
-    fi
-  fi
-  if [[ ! -f "$HOSTFILE" ]]; then
+  if [[ -n "$HOSTFILE" && ! -f "$HOSTFILE" ]]; then
     echo "error: hostfile not found: $HOSTFILE" >&2
     exit 1
   fi
@@ -158,22 +162,38 @@ if [[ "$MODE" == "single" ]]; then
   NPROC="${NPROC:-$NPROC_PER_NODE}"
   LAUNCH_CMD+=("-n" "$NPROC" "-ppn" "$NPROC_PER_NODE")
 elif [[ "$MODE" == "multi" ]]; then
-  TOTAL_AVAILABLE_NODES="${TOTAL_AVAILABLE_NODES:-$(awk 'NF {print $1}' "$HOSTFILE" | sort -u | wc -l)}"
+  # Calculate total available nodes from hostfile if provided, otherwise let xpu_launch infer
+  if [[ -n "$HOSTFILE" ]]; then
+    TOTAL_AVAILABLE_NODES="${TOTAL_AVAILABLE_NODES:-$(awk 'NF {print $1}' "$HOSTFILE" | sort -u | wc -l)}"
 
-  # If SPARE_NODES_PERCENTAGE is set, calculate spare nodes as percentage of total available
-  if [[ -n "${SPARE_NODES_PERCENTAGE:-}" && -z "${SPARE_NODES:-}" ]]; then
-    SPARE_NODES=$((TOTAL_AVAILABLE_NODES * SPARE_NODES_PERCENTAGE / 100))
-    [[ $SPARE_NODES -lt 1 ]] && SPARE_NODES=1
-    NNODES=$((TOTAL_AVAILABLE_NODES - SPARE_NODES))
+    # If SPARE_NODES_PERCENTAGE is set, calculate spare nodes as percentage of total available
+    if [[ -n "${SPARE_NODES_PERCENTAGE:-}" && -z "${SPARE_NODES:-}" ]]; then
+      SPARE_NODES=$((TOTAL_AVAILABLE_NODES * SPARE_NODES_PERCENTAGE / 100))
+      [[ $SPARE_NODES -lt 1 ]] && SPARE_NODES=1
+      NNODES=$((TOTAL_AVAILABLE_NODES - SPARE_NODES))
+    else
+      # Default: use all available nodes for computing if not specified
+      NNODES="${NNODES:-$TOTAL_AVAILABLE_NODES}"
+      SPARE_NODES="${SPARE_NODES:-0}"
+    fi
+
+    NPROC="${NPROC:-$((NNODES * NPROC_PER_NODE))}"
+    LAUNCH_CMD+=("--hostfile" "$HOSTFILE" "-nh" "$NNODES" "-n" "$NPROC" "-ppn" "$NPROC_PER_NODE")
   else
-    # Default: use all available nodes for computing if not specified
-    NNODES="${NNODES:-$TOTAL_AVAILABLE_NODES}"
+    # No hostfile: let xpu_launch auto-detect from scheduler (PBS_NODEFILE, SLURM_NODELIST, etc.)
+    # Only add topology flags if explicitly set by user
+    if [[ -n "${NNODES:-}" ]]; then
+      NPROC="${NPROC:-$((NNODES * NPROC_PER_NODE))}"
+      LAUNCH_CMD+=("-nh" "$NNODES" "-n" "$NPROC" "-ppn" "$NPROC_PER_NODE")
+    elif [[ -n "${NPROC:-}" ]]; then
+      # User specified NPROC but not NNODES: just pass it through
+      LAUNCH_CMD+=("-n" "$NPROC" "-ppn" "$NPROC_PER_NODE")
+    else
+      # No topology specified: xpu_launch will infer from scheduler
+      LAUNCH_CMD+=("-ppn" "$NPROC_PER_NODE")
+    fi
     SPARE_NODES="${SPARE_NODES:-0}"
   fi
-
-  NPROC="${NPROC:-$((NNODES * NPROC_PER_NODE))}"
-
-  LAUNCH_CMD+=("--hostfile" "$HOSTFILE" "-nh" "$NNODES" "-n" "$NPROC" "-ppn" "$NPROC_PER_NODE")
 
   AUTO_RETRY="${AUTO_RETRY:-1}"
   if [[ "$AUTO_RETRY" == "1" && "$SPARE_NODES" -gt 0 ]]; then

@@ -256,24 +256,44 @@ if has_extra_arg "--training.seq_len"; then
 fi
 
 cat >&2 <<EOF
-[ARGS] mode              = ${MODE}$( [[ "$MODE" == "multi" ]] && echo " (hostfile=${HOSTFILE:-auto from PBS_NODEFILE})" )
-[ARGS] MODEL             = ${MODEL}
-[ARGS] MODULE/CONFIG     = ${MODULE} / ${CONFIG}
-[ARGS] DATASET_NAME      = ${DATASET_NAME}
-[ARGS] DATASET_PATH      = ${DATASET_PATH:-<unset>}
-[ARGS] TRAINING_STEPS    = ${TRAINING_STEPS}${TRAINING_STEPS_NOTE}
-[ARGS] SEQ_LEN           = ${SEQ_LEN}${SEQ_LEN_NOTE}
-[ARGS] TORCHTITAN_ROOT   = ${TORCHTITAN_ROOT}
-[ARGS] HF_ASSETS_PATH    = ${HF_ASSETS_PATH}
-[ARGS] LOG_DIR           = ${LOG_DIR}
-[ARGS] CKPT_FOLDER       = ${CKPT_FOLDER}
-[ARGS] CKPT              = ${CKPT:-<unset>}
-[ARGS] RESOURCE_MONITOR  = ${RESOURCE_MONITOR}
-[ARGS] RESOURCE_INTERVAL = ${RESOURCE_INTERVAL}
-[ARGS] RESOURCE_OUTPUT   = ${RESOURCE_OUTPUT_DIR}
-[ARGS] TRAIN_PYTHON_BIN  = ${TRAIN_PYTHON_BIN}
-[ARGS] topology          = NNODES=${NNODES:-auto} NPROC_PER_NODE=${NPROC_PER_NODE:-4} NPROC=${NPROC:-auto} SPARE_NODES=${SPARE_NODES:-auto} AUTO_RETRY=${AUTO_RETRY:-1(multi)}
-[ARGS] extra train args  = ${EXTRA_ARGS[*]:-<none>}
+================================================================================
+TRAINING LAUNCH CONFIGURATION
+================================================================================
+
+[LAUNCH MODE]
+  Mode                   = ${MODE}$( [[ "$MODE" == "multi" ]] && echo " (hostfile=${HOSTFILE:-auto from PBS_NODEFILE})" )
+  Topology               = NNODES=${NNODES:-auto} NPROC_PER_NODE=${NPROC_PER_NODE:-4} NPROC=${NPROC:-auto}
+  Auto Retry             = ${AUTO_RETRY:-1(multi)}
+  Spare Nodes            = ${SPARE_NODES:-auto}
+
+[MODEL & DATASET]
+  Model Path             = ${MODEL}
+  Module/Config          = ${MODULE} / ${CONFIG}
+  Dataset Name           = ${DATASET_NAME}
+  Dataset Path           = ${DATASET_PATH:-<unset>}
+  HF Assets Path         = ${HF_ASSETS_PATH}
+
+[TRAINING HYPERPARAMETERS]
+  Training Steps         = ${TRAINING_STEPS}${TRAINING_STEPS_NOTE}
+  Sequence Length        = ${SEQ_LEN}${SEQ_LEN_NOTE}
+  Loss Std Termination   = ${LOSS_STD_TERMINATION_ENABLED} (threshold: ${LOSS_STD_THRESHOLD}, window: ${LOSS_STD_WINDOW})
+
+[SYSTEM & PATHS]
+  TorchTitan Root        = ${TORCHTITAN_ROOT}
+  Log Directory          = ${LOG_DIR}
+  Checkpoint Folder      = ${CKPT_FOLDER}
+  Checkpoint Load        = ${CKPT:-<unset>}
+  Python Binary          = ${TRAIN_PYTHON_BIN}
+
+[MONITORING]
+  Resource Monitor       = ${RESOURCE_MONITOR}
+  Resource Interval      = ${RESOURCE_INTERVAL}s
+  Resource Output Dir    = ${RESOURCE_OUTPUT_DIR}
+
+[EXTRA ARGUMENTS]
+  Additional Args        = ${EXTRA_ARGS[*]:-<none>}
+
+================================================================================
 EOF
 
 CMD=("$BASE_LAUNCH_SCRIPT" "$MODE")

@@ -150,31 +150,57 @@ class ComplexRoPE(RoPE):
         end = cfg.max_seq_len
         theta = cfg.theta
 
-        freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+        freqs = 1.0 / (
+            theta
+            ** (
+                torch.arange(0, dim, 2)[: (dim // 2)].float() / dim
+            )
+        )
 
         if cfg.scaling == "llama":
             scaling_factor = cfg.scaling_factor
             low_freq_factor = cfg.low_freq_factor
             high_freq_factor = cfg.high_freq_factor
-            original_max_position_embeddings = cfg.original_max_position_embeddings
-            wavelen = 2 * math.pi / freqs
-            high_freq_wavelen = original_max_position_embeddings / high_freq_factor
-            low_freq_wavelen = original_max_position_embeddings / low_freq_factor
-            freqs = torch.where(
-                wavelen > low_freq_wavelen, freqs / scaling_factor, freqs
+            original_max_position_embeddings = (
+                cfg.original_max_position_embeddings
             )
+
+            wavelen = 2 * math.pi / freqs
+            high_freq_wavelen = (
+                original_max_position_embeddings / high_freq_factor
+            )
+            low_freq_wavelen = (
+                original_max_position_embeddings / low_freq_factor
+            )
+
+            freqs = torch.where(
+                wavelen > low_freq_wavelen,
+                freqs / scaling_factor,
+                freqs,
+            )
+
             smooth_factor = (
-                original_max_position_embeddings / wavelen - low_freq_factor
+                original_max_position_embeddings / wavelen
+                - low_freq_factor
             ) / (high_freq_factor - low_freq_factor)
+
             smoothed_freqs = (
-                1 - smooth_factor
-            ) * freqs / scaling_factor + smooth_factor * freqs
+                (1 - smooth_factor) * freqs / scaling_factor
+                + smooth_factor * freqs
+            )
+
             is_medium_freqs = ~(wavelen < high_freq_wavelen) * ~(
                 wavelen > low_freq_wavelen
             )
-            freqs = torch.where(is_medium_freqs, smoothed_freqs, freqs)
+
+            freqs = torch.where(
+                is_medium_freqs,
+                smoothed_freqs,
+                freqs,
+            )
+
         elif cfg.scaling == "yarn" and end > cfg.original_seq_len:
-            # YaRN (DeepSeek V3 style)
+            # YaRN / NTK-by-parts frequency interpolation.
             beta_fast = cfg.beta_fast
             beta_slow = cfg.beta_slow
             base = theta
@@ -182,11 +208,16 @@ class ComplexRoPE(RoPE):
             factor = cfg.rope_factor
 
             def find_correction_dim(
-                num_rotations: float, dim: int, base: float, max_seq_len: int
+                num_rotations: float,
+                dim: int,
+                base: float,
+                max_seq_len: int,
             ) -> float:
                 return (
                     dim
-                    * math.log(max_seq_len / (num_rotations * 2 * math.pi))
+                    * math.log(
+                        max_seq_len / (num_rotations * 2 * math.pi)
+                    )
                     / (2 * math.log(base))
                 )
 
@@ -197,30 +228,96 @@ class ComplexRoPE(RoPE):
                 base: float,
                 max_seq_len: int,
             ) -> tuple[int, int]:
-                low = math.floor(find_correction_dim(low_rot, dim, base, max_seq_len))
-                high = math.ceil(find_correction_dim(high_rot, dim, base, max_seq_len))
+                low = math.floor(
+                    find_correction_dim(
+                        low_rot,
+                        dim,
+                        base,
+                        max_seq_len,
+                    )
+                )
+                high = math.ceil(
+                    find_correction_dim(
+                        high_rot,
+                        dim,
+                        base,
+                        max_seq_len,
+                    )
+                )
                 return max(low, 0), min(high, dim - 1)
 
             def linear_ramp_factor(
-                min_val: float, max_val: float, dim: int
+                min_val: float,
+                max_val: float,
+                dim: int,
             ) -> torch.Tensor:
                 if min_val == max_val:
                     max_val += 0.001
-                linear_func = (torch.arange(dim, dtype=torch.float32) - min_val) / (
-                    max_val - min_val
-                )
+
+                linear_func = (
+                    torch.arange(dim, dtype=torch.float32)
+                    - min_val
+                ) / (max_val - min_val)
+
                 return torch.clamp(linear_func, 0, 1)
 
             low, high = find_correction_range(
-                beta_fast, beta_slow, dim, base, original_seq_len
+                beta_fast,
+                beta_slow,
+                dim,
+                base,
+                original_seq_len,
             )
-            smooth = 1 - linear_ramp_factor(low, high, dim // 2)
-            freqs = freqs / factor * (1 - smooth) + freqs * smooth
+
+            smooth = 1 - linear_ramp_factor(
+                low,
+                high,
+                dim // 2,
+            )
+
+            freqs = (
+                freqs / factor * (1 - smooth)
+                + freqs * smooth
+            )
 
         t = torch.arange(end, device=freqs.device)
         freqs = torch.outer(t, freqs).float()
-        freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
+
+        # exp(i * position * frequency)
+        freqs_cis = torch.polar(
+            torch.ones_like(freqs),
+            freqs,
+        )
+
         return freqs_cis
+
+    def _get_mscale(self) -> float:
+        """Return YaRN attention magnitude scaling.
+
+        YaRN recommends scaling both query and key by
+
+            mscale = 1 + 0.1 * log(rope_factor)
+
+        when extending the context length.
+
+        No magnitude scaling is applied when YaRN is disabled or when
+        the configured maximum sequence length does not exceed the
+        original sequence length.
+        """
+        cfg = self.config
+
+        if cfg.scaling != "yarn":
+            return 1.0
+
+        factor = cfg.rope_factor
+
+        if factor <= 1.0:
+            return 1.0
+
+        if cfg.max_seq_len <= cfg.original_seq_len:
+            return 1.0
+
+        return 0.1 * math.log(factor) + 1.0
 
     def _reshape_cache(
         self,
@@ -233,25 +330,97 @@ class ComplexRoPE(RoPE):
             Cache of shape ``(1 or batch, seq_len, 1, dim / 2)``.
         """
         positions = _maybe_wrap_positions(positions, query)
+
         if positions is not None:
-            _maybe_check_max_pos(positions, max_valid_pos=self.cache.shape[0] - 1)
-        # Complex RoPE cache has width dim / 2 because each complex value
-        # represents a pair of real dimensions.
-        complex_query_shape = (*query.shape[:-1], query.shape[-1] // 2)
-        return _reshape_for_broadcast(self.cache, complex_query_shape, positions)
+            _maybe_check_max_pos(
+                positions,
+                max_valid_pos=self.cache.shape[0] - 1,
+            )
+
+        # Complex RoPE cache has width dim / 2 because each complex
+        # value represents a pair of real dimensions.
+        complex_query_shape = (
+            *query.shape[:-1],
+            query.shape[-1] // 2,
+        )
+
+        return _reshape_for_broadcast(
+            self.cache,
+            complex_query_shape,
+            positions,
+        )
+
+    def forward(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        positions: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Apply complex RoPE and YaRN attention scaling."""
+        reshaped_cache = self._reshape_cache(
+            query,
+            positions,
+        )
+
+        mscale = self._get_mscale()
+
+        return self.apply_rotary_emb(
+            query,
+            key,
+            reshaped_cache,
+            mscale=mscale,
+        )
 
     @staticmethod
     def apply_rotary_emb(
         query: torch.Tensor,
         key: torch.Tensor,
         rope_cache: torch.Tensor,
+        mscale: float = 1.0,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Apply complex RoPE using adjacent-dim pairs."""
-        xq_ = torch.view_as_complex(query.float().reshape(*query.shape[:-1], -1, 2))
-        xk_ = torch.view_as_complex(key.float().reshape(*key.shape[:-1], -1, 2))
-        xq_out = torch.view_as_real(xq_ * rope_cache).flatten(3)
-        xk_out = torch.view_as_real(xk_ * rope_cache).flatten(3)
-        return xq_out.type_as(query), xk_out.type_as(key)
+        """Apply complex RoPE and optional Q/K magnitude scaling."""
+        xq_ = torch.view_as_complex(
+            query.float().reshape(
+                *query.shape[:-1],
+                -1,
+                2,
+            )
+        )
+
+        xk_ = torch.view_as_complex(
+            key.float().reshape(
+                *key.shape[:-1],
+                -1,
+                2,
+            )
+        )
+
+        # Complex rotation:
+        #
+        #   q' = q * exp(i * theta)
+        #   k' = k * exp(i * theta)
+        #
+        # YaRN mscale is then applied equally to Q and K.
+        xq_out = (
+            torch.view_as_real(
+                xq_ * rope_cache
+            )
+            .flatten(3)
+            * mscale
+        )
+
+        xk_out = (
+            torch.view_as_real(
+                xk_ * rope_cache
+            )
+            .flatten(3)
+            * mscale
+        )
+
+        return (
+            xq_out.type_as(query),
+            xk_out.type_as(key),
+        )
 
 
 class CosSinRoPE(RoPE):

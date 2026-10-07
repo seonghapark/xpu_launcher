@@ -784,6 +784,123 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful, Configurable):
         # The returned loss here is local SUM loss / global_valid_tokens
         return loss
 
+    def _log_training_hyperparameters(self) -> None:
+        """Log all training hyperparameters and configuration parameters."""
+        config = self.config
+        parallel_dims = self.parallel_dims
+
+        logger.info("=" * 80)
+        logger.info("TRAINING HYPERPARAMETERS AND CONFIGURATION")
+        logger.info("=" * 80)
+
+        # Model Information
+        logger.info("\n[MODEL]")
+        logger.info(f"  Model Name: {config.model_spec.name}")
+        logger.info(f"  Model Flavor: {config.model_spec.flavor}")
+        logger.info(f"  Architecture: {self.model_config.__class__.__name__}")
+
+        # Check for YaRN or other positional embeddings modifications
+        if hasattr(self.model_config, 'rope_scaling'):
+            logger.info(f"  Rope Scaling Type: {getattr(self.model_config, 'rope_scaling', 'standard')}")
+        if hasattr(self.model_config, 'rope_theta'):
+            logger.info(f"  Rope Theta: {getattr(self.model_config, 'rope_theta', 'default')}")
+
+        # Training Parameters
+        logger.info("\n[TRAINING]")
+        logger.info(f"  Learning Rate: {config.optimizer.lr}")
+        logger.info(f"  Total Training Steps: {config.training.steps}")
+        logger.info(f"  Sequence Length: {config.training.seq_len}")
+        logger.info(f"  Global Batch Size: {config.training.global_batch_size}")
+        logger.info(f"  Micro Batch Size: {config.training.batch_size}")
+        logger.info(f"  Gradient Accumulation Steps: {self.gradient_accumulation_steps}")
+        logger.info(f"  Data Type: {config.training.dtype}")
+
+        # Optimizer Parameters
+        logger.info("\n[OPTIMIZER]")
+        logger.info(f"  Optimizer Type: {config.optimizer.__class__.__name__}")
+        logger.info(f"  Learning Rate: {config.optimizer.lr}")
+        logger.info(f"  Weight Decay: {config.optimizer.weight_decay}")
+        if hasattr(config.optimizer, 'betas'):
+            logger.info(f"  Betas (Adam): {config.optimizer.betas}")
+        if hasattr(config.optimizer, 'eps'):
+            logger.info(f"  Epsilon: {config.optimizer.eps}")
+
+        # Learning Rate Scheduler
+        logger.info("\n[LR SCHEDULER]")
+        logger.info(f"  LR Scheduler Type: {config.lr_scheduler.__class__.__name__}")
+        if hasattr(config.lr_scheduler, 'warmup_steps'):
+            logger.info(f"  Warmup Steps: {config.lr_scheduler.warmup_steps}")
+        if hasattr(config.lr_scheduler, 'min_lr_ratio'):
+            logger.info(f"  Min LR Ratio: {config.lr_scheduler.min_lr_ratio}")
+
+        # Parallelism Configuration
+        logger.info("\n[PARALLELISM]")
+        logger.info(f"  Tensor Parallel Size (TP): {parallel_dims.tp}")
+        logger.info(f"  Pipeline Parallel Size (PP): {parallel_dims.pp}")
+        logger.info(f"  Data Parallel Size (DP): {parallel_dims.dp}")
+        logger.info(f"  Context Parallel Size (CP): {parallel_dims.cp}")
+        logger.info(f"  SPMD Backend: {config.parallelism.spmd_backend}")
+
+        if config.parallelism.enable_sequence_parallel:
+            logger.info(f"  Sequence Parallel: ENABLED")
+
+        # Data Configuration
+        logger.info("\n[DATA]")
+        logger.info(f"  Dataset Name: {config.dataloader.dataset}")
+        logger.info(f"  Dataset Path: {config.dataloader.dataset_path or 'default'}")
+
+        # File Paths Configuration
+        logger.info("\n[FILE PATHS]")
+        logger.info(f"  HF Assets Path: {config.hf_assets_path}")
+
+        # Log tokenizer files if they exist
+        tokenizer_config_path = os.path.join(config.hf_assets_path, "tokenizer_config.json")
+        tokenizer_json_path = os.path.join(config.hf_assets_path, "tokenizer.json")
+        model_config_path = os.path.join(config.hf_assets_path, "config.json")
+
+        if os.path.exists(tokenizer_config_path):
+            logger.info(f"  Tokenizer Config: {tokenizer_config_path}")
+        if os.path.exists(tokenizer_json_path):
+            logger.info(f"  Tokenizer File: {tokenizer_json_path}")
+        if os.path.exists(model_config_path):
+            logger.info(f"  Model Config: {model_config_path}")
+
+        # Model Architecture Details (if available)
+        logger.info("\n[ARCHITECTURE DETAILS]")
+        if hasattr(self.model_config, 'dim'):
+            logger.info(f"  Hidden Dimension: {self.model_config.dim}")
+        if hasattr(self.model_config, 'n_layers'):
+            logger.info(f"  Number of Layers: {self.model_config.n_layers}")
+        if hasattr(self.model_config, 'n_heads'):
+            logger.info(f"  Number of Attention Heads: {self.model_config.n_heads}")
+        if hasattr(self.model_config, 'n_kv_heads'):
+            logger.info(f"  Number of KV Heads: {self.model_config.n_kv_heads}")
+        if hasattr(self.model_config, 'vocab_size'):
+            logger.info(f"  Vocabulary Size: {self.model_config.vocab_size}")
+        if hasattr(self.model_config, 'intermediate_dim'):
+            logger.info(f"  Intermediate Dimension (FFN): {self.model_config.intermediate_dim}")
+
+        # Activation Checkpointing
+        logger.info("\n[MEMORY OPTIMIZATION]")
+        logger.info(f"  Activation Checkpoint Type: {config.activation_checkpoint.__class__.__name__}")
+        logger.info(f"  Compile Enabled: {config.compile.enable}")
+        if config.compile.enable:
+            logger.info(f"  Compiled Components: {config.compile.components}")
+
+        # Checkpoint Configuration
+        logger.info("\n[CHECKPOINT]")
+        logger.info(f"  Checkpoint Enabled: {config.checkpoint.enable}")
+        logger.info(f"  Checkpoint Folder: {config.checkpoint.folder}")
+        logger.info(f"  Checkpoint Interval (steps): {config.checkpoint.interval_type}")
+
+        # Distributed Configuration
+        logger.info("\n[DISTRIBUTED]")
+        logger.info(f"  World Size: {torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1}")
+        logger.info(f"  Global Rank: {torch.distributed.get_rank() if torch.distributed.is_initialized() else 0}")
+        logger.info(f"  Local Rank: {int(os.environ.get('LOCAL_RANK', 0))}")
+
+        logger.info("=" * 80)
+
     def train_step(
         self, data_iterator: Iterator[tuple[dict[str, torch.Tensor], torch.Tensor]]
     ):
@@ -922,6 +1039,9 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful, Configurable):
         self.training_start_time = time.time()
 
         logger.info(f"Training starts at step {self.step + 1}")
+
+        # Log comprehensive hyperparameters
+        self._log_training_hyperparameters()
 
         with config.profiler.build(
             global_step=self.step,
