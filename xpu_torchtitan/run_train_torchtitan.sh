@@ -170,18 +170,50 @@ MODEL="$(realpath "$MODEL")"
 MODULE="${MODULE:-llama3}"
 CONFIG="${CONFIG:-llama3_debugmodel}"
 HF_ASSETS_PATH="${HF_ASSETS_PATH:-${MODEL}}"
-DATASET_NAME="${DATASET_NAME:-pg19_multinews}"
-DATASET_PATH="${DATASET_PATH:-}"
+# AGPT_* fallbacks let calculate_agpt_params.sh output flow in unchanged; the
+# built-in default stays the streaming pg19_multinews corpus.
+DATASET_NAME="${DATASET_NAME:-${AGPT_DATASET:-pg19_multinews}}"
+DATASET_PATH="${DATASET_PATH:-${AGPT_DATASET_PATH:-}}"
 LOG_DIR="${LOG_DIR:-${TORCHTITAN_ROOT}/outputs/xpu_torchtitan_$(date +%Y%m%d_%H%M%S)}"
 RESOURCE_OUTPUT_DIR="${RESOURCE_OUTPUT_DIR:-${LOG_DIR}/resource_metrics}"
 CKPT_FOLDER="${CKPT_FOLDER:-checkpoint}"
+# Checkpoint every CKPT_INTERVAL steps; keep only the CKPT_KEEP_LATEST_K most
+# recent ones. 0 keeps every checkpoint. AGPT_* names let the values flow
+# straight from calculate_agpt_params.sh.
+CKPT_INTERVAL="${CKPT_INTERVAL:-${AGPT_CKPT_INTERVAL:-100}}"
+CKPT_KEEP_LATEST_K="${CKPT_KEEP_LATEST_K:-${AGPT_CKPT_KEEP_LATEST_K:-0}}"
 TRAINING_STEPS="${TRAINING_STEPS:-100}"
 SEQ_LEN="${SEQ_LEN:-16384}"
-TRAIN_PYTHON_BIN_DEFAULT="/lus/flare/projects/datascience/seonghapark/venv/bin/python"
-if [[ ! -x "$TRAIN_PYTHON_BIN_DEFAULT" ]] && [[ -x "${TORCHTITAN_ROOT}/.venv/bin/python" ]]; then
-  TRAIN_PYTHON_BIN_DEFAULT="${TORCHTITAN_ROOT}/.venv/bin/python"
-fi
-TRAIN_PYTHON_BIN="${TRAIN_PYTHON_BIN:-$TRAIN_PYTHON_BIN_DEFAULT}"
+
+# Resolve the training interpreter. Order matters: an explicitly activated
+# virtualenv first, then a .venv beside the checkout, then the site venv that
+# actually has torch+torchtitan installed. A bare python3 from PATH is the last
+# resort — on Aurora login nodes that resolves to /usr/bin/python3, which has no
+# torch, so preferring it would break every launch. Set TRAIN_PYTHON_BIN or
+# TORCHTITAN_VENV to override.
+TORCHTITAN_VENV="${TORCHTITAN_VENV:-/lus/flare/projects/datascience/seonghapark/venv}"
+resolve_train_python() {
+  local candidate
+  for candidate in \
+    "${VIRTUAL_ENV:+${VIRTUAL_ENV}/bin/python}" \
+    "${TORCHTITAN_ROOT}/.venv/bin/python" \
+    "${SCRIPT_DIR}/.venv/bin/python" \
+    "${TORCHTITAN_VENV}/bin/python"
+  do
+    [[ -n "$candidate" && -x "$candidate" ]] && { echo "$candidate"; return 0; }
+  done
+
+  command -v python3 2>/dev/null || echo python3
+}
+TRAIN_PYTHON_BIN="${TRAIN_PYTHON_BIN:-$(resolve_train_python)}"
+
+# Optimizer / learning rate. torchtitan has no flat --optimizer.lr: the
+# optimizer is a list of parameter groups, each with its own name and kwargs,
+# so the flags are indexed (group 0 is AGPT's catch-all ".*" group).
+# Unset by default, so the model registry's own choice stands.
+OPTIMIZER_NAME="${OPTIMIZER_NAME:-${AGPT_OPTIMIZER:-}}"
+LEARNING_RATE="${LEARNING_RATE:-${AGPT_LR:-}}"
+OPTIMIZER_PARAM_GROUP="${OPTIMIZER_PARAM_GROUP:-0}"
 
 mkdir -p "$LOG_DIR"
 
@@ -215,6 +247,23 @@ if ! has_extra_arg "--training.loss_std_threshold"; then
 fi
 if ! has_extra_arg "--training.loss_std_window"; then
   TRAIN_CMD+=("--training.loss_std_window=$LOSS_STD_WINDOW")
+fi
+
+if ! has_extra_arg "--checkpoint.interval"; then
+  TRAIN_CMD+=("--checkpoint.interval" "$CKPT_INTERVAL")
+fi
+# keep_latest_k=0 disables purging entirely (torchtitan only deletes when
+# keep_latest_k > 0), i.e. every checkpoint is kept.
+if ! has_extra_arg "--checkpoint.keep_latest_k"; then
+  TRAIN_CMD+=("--checkpoint.keep_latest_k" "$CKPT_KEEP_LATEST_K")
+fi
+
+_OPT_PREFIX="--optimizer.param-groups.${OPTIMIZER_PARAM_GROUP}"
+if [[ -n "$OPTIMIZER_NAME" ]] && ! has_extra_arg "${_OPT_PREFIX}.optimizer-name"; then
+  TRAIN_CMD+=("${_OPT_PREFIX}.optimizer-name" "$OPTIMIZER_NAME")
+fi
+if [[ -n "$LEARNING_RATE" ]] && ! has_extra_arg "${_OPT_PREFIX}.optimizer-kwargs.lr"; then
+  TRAIN_CMD+=("${_OPT_PREFIX}.optimizer-kwargs.lr" "$LEARNING_RATE")
 fi
 
 if [[ -n "$DATASET_PATH" ]]; then
@@ -269,6 +318,8 @@ TRAINING LAUNCH CONFIGURATION
 [MODEL & DATASET]
   Model Path             = ${MODEL}
   Module/Config          = ${MODULE} / ${CONFIG}
+  Optimizer              = ${OPTIMIZER_NAME:-<registry default>}
+  Learning Rate          = ${LEARNING_RATE:-<registry default>}
   Dataset Name           = ${DATASET_NAME}
   Dataset Path           = ${DATASET_PATH:-<unset>}
   HF Assets Path         = ${HF_ASSETS_PATH}
@@ -282,6 +333,8 @@ TRAINING LAUNCH CONFIGURATION
   TorchTitan Root        = ${TORCHTITAN_ROOT}
   Log Directory          = ${LOG_DIR}
   Checkpoint Folder      = ${CKPT_FOLDER}
+  Checkpoint Interval    = every ${CKPT_INTERVAL} steps
+  Checkpoint Keep Last K = ${CKPT_KEEP_LATEST_K}$([[ ${CKPT_KEEP_LATEST_K} -eq 0 ]] && echo " (keep all)")
   Checkpoint Load        = ${CKPT:-<unset>}
   Python Binary          = ${TRAIN_PYTHON_BIN}
 

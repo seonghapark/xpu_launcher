@@ -14,6 +14,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Capture the MODEL/MODEL_PATH environment convention used by
+# run_train_torchtitan.sh (MODEL = path to model assets) before the defaults
+# below clobber it; --model / --model-path still take precedence.
+ENV_MODEL_PATH="${MODEL:-${MODEL_PATH:-}}"
+
 # Defaults
 MODEL=""
 MODEL_PATH=""
@@ -33,6 +38,10 @@ SPARE_NODES=""
 SPARE_NODES_PERCENTAGE=""
 AUTO_RETRY=""
 FAILOVER_PROFILE=""
+CHECKPOINT_PATH=""
+RESOURCE_MONITOR=""
+RESOURCE_INTERVAL=""
+RESOURCE_OUTPUT_DIR=""
 
 usage() {
   cat <<'EOF'
@@ -61,6 +70,12 @@ Optional (Training):
 Optional (Paths):
   --model-path PATH         Path to model/tokenizer directory
   --log-dir DIR             Output directory
+  --checkpoint PATH         Checkpoint path to resume from
+
+Optional (Monitoring):
+  --resource-monitor        Enable resource monitoring
+  --resource-interval N     Resource monitor interval in seconds
+  --resource-output-dir DIR Resource metrics output directory
 
 Optional (Fault Tolerance):
   --spare-nodes N           Number of spare nodes for failover
@@ -91,10 +106,10 @@ Examples:
 EOF
 }
 
-error() {
-  echo "Error: $*" >&2
+if [[ $# -lt 1 ]]; then
+  usage
   exit 1
-}
+fi
 
 # Detect NNODES from PBS context if available
 detect_nnodes() {
@@ -111,7 +126,10 @@ detect_nnodes() {
 validate_model() {
   case "$MODEL" in
     2b|20b|80b) ;;
-    *) error "Invalid model: $MODEL (must be 2b, 20b, or 80b)" ;;
+    *)
+      echo "error: invalid model: $MODEL (must be 2b, 20b, or 80b)" >&2
+      exit 1
+      ;;
   esac
 }
 
@@ -119,7 +137,10 @@ validate_model() {
 validate_mode() {
   case "$MODE" in
     single|multi) ;;
-    *) error "Invalid mode: $MODE (must be single or multi)" ;;
+    *)
+      echo "error: invalid mode: $MODE (must be single or multi)" >&2
+      exit 1
+      ;;
   esac
 }
 
@@ -187,6 +208,22 @@ while [[ $# -gt 0 ]]; do
       FAILOVER_PROFILE="$2"
       shift 2
       ;;
+    --checkpoint)
+      CHECKPOINT_PATH="$2"
+      shift 2
+      ;;
+    --resource-monitor)
+      RESOURCE_MONITOR=1
+      shift
+      ;;
+    --resource-interval)
+      RESOURCE_INTERVAL="$2"
+      shift 2
+      ;;
+    --resource-output-dir)
+      RESOURCE_OUTPUT_DIR="$2"
+      shift 2
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -210,28 +247,62 @@ while [[ $# -gt 0 ]]; do
         shift
       fi
 
-      # Collect remaining args as extra training args
-      if [[ $# -gt 0 && "$1" == "--" ]]; then
-        shift
-        EXTRA_ARGS=("$@")
-      fi
-      break
+      # Keep parsing: options may follow the mode word, as in
+      #   ./run_train_agpt.sh multi --resource-monitor -- --training.steps 400
+      # Breaking here would silently discard every one of them.
       ;;
     *)
-      error "Unknown option or invalid mode: $1"
+      echo "error: unknown option or invalid mode: $1" >&2
+      usage
+      exit 1
       ;;
   esac
 done
 
+# Fall back to the MODEL/MODEL_PATH environment convention when --model-path
+# was not given.
+if [[ -z "$MODEL_PATH" && -n "$ENV_MODEL_PATH" ]]; then
+  MODEL_PATH="$ENV_MODEL_PATH"
+fi
+
+# Infer the model size from the assets path when --model was not given, so the
+# env-driven invocation style (MODEL=/path/to/agpt-2b-... ) works here too.
+if [[ -z "$MODEL" && -n "$MODEL_PATH" ]]; then
+  case "$(basename "$MODEL_PATH")" in
+    *-2b-*|*-2b|2b*)    MODEL="2b" ;;
+    *-20b-*|*-20b|20b*) MODEL="20b" ;;
+    *-80b-*|*-80b|80b*) MODEL="80b" ;;
+  esac
+  if [[ -n "$MODEL" ]]; then
+    echo "[INFO] Inferred model size '$MODEL' from $(basename "$MODEL_PATH")" >&2
+  fi
+fi
+
 # Validate required arguments
 if [[ -z "$MODEL" ]]; then
-  error "--model is required"
+  echo "error: --model is required (or set MODEL/--model-path to a path whose" >&2
+  echo "       name contains the size, e.g. agpt-2b-v2-...)" >&2
+  usage
+  exit 1
 fi
 
 validate_model "$MODEL"
 
+has_extra_arg() {
+  local option="$1"
+  local arg
+  for arg in "${EXTRA_ARGS[@]}"; do
+    if [[ "$arg" == "$option" || "$arg" == "$option="* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 if [[ -z "$MODE" ]]; then
-  error "MODE (single or multi) is required"
+  echo "error: mode (single or multi) is required" >&2
+  usage
+  exit 1
 fi
 
 validate_mode "$MODE"
@@ -241,7 +312,8 @@ detect_nnodes
 
 # Validate NNODES
 if [[ -z "$NNODES" && "$MODE" == "multi" ]]; then
-  error "NNODES required for multi mode (provide --nnodes or run in PBS job)"
+  echo "error: nnodes required for multi mode (provide --nnodes or run in PBS job)" >&2
+  exit 1
 fi
 
 # Set NNODES for single-node mode if not specified
@@ -263,26 +335,53 @@ CALC_ARGS=("--model" "$MODEL" "--nnodes" "$NNODES")
 echo "[INFO] Calculating AGPT parameters for $MODEL on $NNODES nodes..." >&2
 eval $("${SCRIPT_DIR}/calculate_agpt_params.sh" "${CALC_ARGS[@]}")
 
-# Set MODEL_PATH default if not provided
+# Validate checkpoint path if provided
+if [[ -n "$CHECKPOINT_PATH" ]]; then
+  if [[ ! -d "$CHECKPOINT_PATH" ]]; then
+    echo "error: checkpoint path not found: $CHECKPOINT_PATH" >&2
+    exit 1
+  fi
+  CHECKPOINT_PATH="$(realpath "$CHECKPOINT_PATH")"
+fi
+
+# Preserve the model size (2b|20b|80b): MODEL is later overwritten with the
+# model path for run_train_torchtitan.sh, which expects MODEL to be a path.
+MODEL_SIZE="$MODEL"
+
+# MODEL_PATH has no useful default: the assets live in per-user, per-checkpoint
+# directories whose names carry a step number, so guessing a path only turns a
+# clear "tell me where the model is" into a confusing "not found".
 if [[ -z "$MODEL_PATH" ]]; then
-  MODEL_PATH="${HOME}/models/agpt-${MODEL}"
+  echo "error: model assets path is required for agpt-${MODEL_SIZE}" >&2
+  echo "       pass --model-path PATH, or set MODEL=/path/to/agpt-${MODEL_SIZE}-..." >&2
+  exit 1
 fi
 
 # Validate MODEL_PATH exists
 if [[ ! -d "$MODEL_PATH" ]]; then
-  error "Model path not found: $MODEL_PATH"
+  echo "error: model path not found: $MODEL_PATH" >&2
+  exit 1
 fi
 
-# Set LOG_DIR with timestamp if not provided
+# Set LOG_DIR with timestamp if not provided. Absolute: run_train_torchtitan.sh
+# cd's to TORCHTITAN_ROOT before launching, so a relative path would be created
+# here but resolved against a different directory there.
 if [[ -z "$LOG_DIR" ]]; then
-  LOG_DIR="outputs/agpt_${MODEL}_$(date +%Y%m%d_%H%M%S)"
+  LOG_DIR="${SCRIPT_DIR}/outputs/agpt_${MODEL_SIZE}_$(date +%Y%m%d_%H%M%S)"
 fi
 
 mkdir -p "$LOG_DIR"
 
+TORCHTITAN_LAUNCH_SCRIPT="${SCRIPT_DIR}/run_train_torchtitan.sh"
+if [[ ! -x "$TORCHTITAN_LAUNCH_SCRIPT" ]]; then
+  echo "error: torchtitan launch wrapper not executable: $TORCHTITAN_LAUNCH_SCRIPT" >&2
+  echo "hint: chmod +x ${TORCHTITAN_LAUNCH_SCRIPT}" >&2
+  exit 1
+fi
+
 # Build run_train_torchtitan.sh command
 TRAIN_CMD=(
-  "${SCRIPT_DIR}/run_train_torchtitan.sh"
+  "$TORCHTITAN_LAUNCH_SCRIPT"
   "$MODE"
 )
 
@@ -301,12 +400,22 @@ TRAIN_CMD+=(--)
 
 # Set environment variables for run_train_torchtitan.sh
 export MODEL="$MODEL_PATH"
-export MODULE="agpt"
-export CONFIG="agpt_${AGPT_MODEL}"
+# Caller-supplied MODULE/CONFIG win, so non-default AGPT variants
+# (agpt_2b_yarn, *_flex_attn, ...) are reachable through this wrapper.
+export MODULE="${MODULE:-agpt}"
+export CONFIG="${CONFIG:-agpt_${AGPT_MODEL}}"
+export DATASET_NAME="${DATASET_NAME:-$AGPT_DATASET}"
+export DATASET_PATH="${DATASET_PATH:-$AGPT_DATASET_PATH}"
 export TRAINING_STEPS="$AGPT_TRAINING_STEPS"
 export SEQ_LEN="$AGPT_SEQ_LEN"
 export LOG_DIR="$LOG_DIR"
 export CKPT_FOLDER="$AGPT_CKPT_DIR"
+# The calculator decides these; forward them so they reach the training
+# command instead of only appearing in the summary. Caller env still wins.
+export OPTIMIZER_NAME="${OPTIMIZER_NAME:-$AGPT_OPTIMIZER}"
+export LEARNING_RATE="${LEARNING_RATE:-$AGPT_LR}"
+export CKPT_INTERVAL="${CKPT_INTERVAL:-$AGPT_CKPT_INTERVAL}"
+export CKPT_KEEP_LATEST_K="${CKPT_KEEP_LATEST_K:-$AGPT_CKPT_KEEP_LATEST_K}"
 
 # Set fault tolerance variables if provided
 [[ -n "$SPARE_NODES" ]] && export SPARE_NODES="$SPARE_NODES"
@@ -314,43 +423,88 @@ export CKPT_FOLDER="$AGPT_CKPT_DIR"
 [[ -n "$AUTO_RETRY" ]] && export AUTO_RETRY="$AUTO_RETRY"
 [[ -n "$FAILOVER_PROFILE" ]] && export FAILOVER_PROFILE="$FAILOVER_PROFILE"
 
-# Build training-specific arguments
-TRAINING_ARGS=(
-  "--training.steps" "$AGPT_TRAINING_STEPS"
-  "--training.seq_len" "$AGPT_SEQ_LEN"
-)
+# Set checkpoint variable if provided
+[[ -n "$CHECKPOINT_PATH" ]] && export CKPT="$CHECKPOINT_PATH"
 
-TRAIN_CMD+=("${TRAINING_ARGS[@]}")
+# Set resource monitoring variables if provided
+[[ -n "$RESOURCE_MONITOR" ]] && export RESOURCE_MONITOR="$RESOURCE_MONITOR"
+[[ -n "$RESOURCE_INTERVAL" ]] && export RESOURCE_INTERVAL="$RESOURCE_INTERVAL"
+[[ -n "$RESOURCE_OUTPUT_DIR" ]] && export RESOURCE_OUTPUT_DIR="$RESOURCE_OUTPUT_DIR"
+
+# Build training-specific arguments. Each default is skipped when the user
+# supplied the same flag after `--`, so explicit overrides always win.
+# AGPT_GAS is not forwarded: torchtitan has no gradient-accumulation field, and
+# the calculator already folds GAS into AGPT_GBS.
+TRAINING_ARGS=()
+if ! has_extra_arg "--training.steps"; then
+  TRAINING_ARGS+=("--training.steps" "$AGPT_TRAINING_STEPS")
+fi
+if ! has_extra_arg "--training.seq_len"; then
+  TRAINING_ARGS+=("--training.seq_len" "$AGPT_SEQ_LEN")
+fi
+if ! has_extra_arg "--training.local_batch_size"; then
+  TRAINING_ARGS+=("--training.local_batch_size" "$AGPT_LBS")
+fi
+if ! has_extra_arg "--parallelism.tensor_parallel_degree"; then
+  TRAINING_ARGS+=("--parallelism.tensor_parallel_degree" "$AGPT_TP")
+fi
+if ! has_extra_arg "--parallelism.pipeline_parallel_degree"; then
+  TRAINING_ARGS+=("--parallelism.pipeline_parallel_degree" "$AGPT_PP")
+fi
+if ! has_extra_arg "--parallelism.context_parallel_degree"; then
+  TRAINING_ARGS+=("--parallelism.context_parallel_degree" "$AGPT_CP")
+fi
+
+if [[ ${#TRAINING_ARGS[@]} -gt 0 ]]; then
+  TRAIN_CMD+=("${TRAINING_ARGS[@]}")
+fi
 
 # Add any extra arguments passed by user
 if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
   TRAIN_CMD+=("${EXTRA_ARGS[@]}")
 fi
 
-# Print configuration summary
 cat >&2 <<EOF
-==========================================
-AGPT Training Configuration
-==========================================
-Model:                    $MODEL
-Mode:                     $MODE
-Nodes:                    $NNODES
-Global Batch Size:        $AGPT_GBS
-Tensor Parallelism:       $AGPT_TP
-Training Steps:           $AGPT_TRAINING_STEPS
-Sequence Length:          $AGPT_SEQ_LEN
-Model Path:               $MODEL_PATH
-Log Directory:            $LOG_DIR
-Checkpoint Directory:     $AGPT_CKPT_DIR
-==========================================
+================================================================================
+AGPT TRAINING LAUNCH CONFIGURATION
+================================================================================
+
+[MODEL]
+  Model                  = ${MODEL_SIZE}
+  Model Path             = ${MODEL_PATH}
+
+[LAUNCH MODE]
+  Mode                   = ${MODE}$( [[ "$MODE" == "multi" ]] && echo " (hostfile=${HOSTFILE:-auto from PBS_NODEFILE})" )
+  Nodes                  = ${NNODES}
+
+[PARALLELISM & BATCH]
+  Tensor Parallelism     = ${AGPT_TP}
+  Pipeline Parallelism   = ${AGPT_PP}
+  Context Parallelism    = ${AGPT_CP}
+  Local Batch Size       = ${AGPT_LBS}
+  Gradient Accumulation  = ${AGPT_GAS}
+  Global Batch Size      = ${AGPT_GBS}
+
+[TRAINING HYPERPARAMETERS]
+  Training Steps         = ${AGPT_TRAINING_STEPS}
+  Sequence Length        = ${AGPT_SEQ_LEN}
+  Train Tokens           = ${AGPT_TRAIN_TOKENS}
+
+[SYSTEM & PATHS]
+  Log Directory          = ${LOG_DIR}
+  Checkpoint Directory   = ${AGPT_CKPT_DIR}
+  Checkpoint Load        = ${CHECKPOINT_PATH:-<unset>}
+
+[MONITORING]
+  Resource Monitor       = ${RESOURCE_MONITOR:-0}
+  Resource Interval      = ${RESOURCE_INTERVAL:-<default>}s
+  Resource Output Dir    = ${RESOURCE_OUTPUT_DIR:-<default>}
+
+================================================================================
 EOF
 
-# Execute or dry-run
-if [[ $DRY_RUN -eq 1 ]]; then
-  echo "[DRY-RUN] Would execute:" >&2
-  printf '%q ' "${TRAIN_CMD[@]}" >&2
-  printf '\n' >&2
-else
-  echo "[INFO] Executing training command..." >&2
-  exec "${TRAIN_CMD[@]}"
-fi
+printf 'Running: '
+printf '%q ' "${TRAIN_CMD[@]}"
+printf '\n'
+
+exec "${TRAIN_CMD[@]}"

@@ -114,7 +114,24 @@ if [[ "${1:-}" == "--" ]]; then
 fi
 
 XPU_CMD="${XPU_CMD:-xpu}"
-PYTHON_BIN="${PYTHON_BIN:-/lus/flare/projects/datascience/seonghapark/venv/bin/python}"
+# Resolve the interpreter. Order matters: an activated virtualenv first, then a
+# .venv beside this script, then the site venv that actually has torch. A bare
+# python3 from PATH is the last resort — on Aurora login nodes that is
+# /usr/bin/python3, which has no torch. PYTHON_BIN or XPU_VENV override.
+XPU_VENV="${XPU_VENV:-/lus/flare/projects/datascience/seonghapark/venv}"
+resolve_python_bin() {
+  local candidate
+  for candidate in \
+    "${VIRTUAL_ENV:+${VIRTUAL_ENV}/bin/python}" \
+    "${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")}/.venv/bin/python" \
+    "${XPU_VENV}/bin/python"
+  do
+    [[ -n "$candidate" && -x "$candidate" ]] && { echo "$candidate"; return 0; }
+  done
+
+  command -v python3 2>/dev/null || echo python3
+}
+PYTHON_BIN="${PYTHON_BIN:-$(resolve_python_bin)}"
 SCHEDULER="${SCHEDULER:-auto}"
 
 # Auto-detect number of XPU devices per node
