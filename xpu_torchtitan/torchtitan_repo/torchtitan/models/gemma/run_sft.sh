@@ -4,15 +4,10 @@
 #
 # Instruction fine-tune google/gemma-7b via HF Transformers + FSDP2.
 #
-# The launcher auto-detects the device count (XPU on Aurora, else CUDA) and
-# picks a launcher:
-#   * If `ezpz` is on PATH AND a PBS/SLURM job env is present -> `ezpz launch`
-#     (correct for multi-node Aurora / ALCF).
-#   * Otherwise -> `torchrun --nproc_per_node=<detected>` (single-node).
+# Single-node launch via `torchrun --nproc_per_node=$NGPU`.
 #
 # Overrides:
-#   NGPU        Force the per-node process count.
-#   LAUNCHER    "ezpz" | "torchrun" | "auto" (default "auto").
+#   NGPU        Per-node process count (default: 6).
 #   LOG_RANK    Ranks whose stdout to tee to the terminal (default "0").
 #   MODEL_PATH  HF model path or hub id (default: ./assets/hf/gemma-7b[/main]).
 #
@@ -22,31 +17,12 @@
 #       --instruction_key problem --output_key solution \
 #       --output_dir outputs/gemma-7b-numina
 #
-#   NGPU=12 LAUNCHER=torchrun ./torchtitan/models/gemma/run_sft.sh ...
+#   NGPU=12 ./torchtitan/models/gemma/run_sft.sh ...
 set -eo pipefail
 
 LOG_RANK=${LOG_RANK:-0}
-LAUNCHER=${LAUNCHER:-auto}
 
-# ---------------------------------------------------------------------------
-# Auto-detect device count (XPU on Aurora, else CUDA)
-# ---------------------------------------------------------------------------
-_detect_ngpu() {
-    python3 - <<'PY' 2>/dev/null
-try:
-    import torch
-    if hasattr(torch, "xpu") and torch.xpu.is_available():
-        print(torch.xpu.device_count())
-    elif torch.cuda.is_available():
-        print(torch.cuda.device_count())
-    else:
-        print("no-gpu")
-except Exception:
-    print("ngpu-detect-failed")
-PY
-}
-
-NGPU=6
+NGPU="${NGPU:-6}"
 MODEL_PATH="${MODEL_PATH:-"./assets/hf/gemma-7b"}"
 echo "[run_sft.sh] NGPU=${NGPU}  MODEL_PATH=${MODEL_PATH}"
 

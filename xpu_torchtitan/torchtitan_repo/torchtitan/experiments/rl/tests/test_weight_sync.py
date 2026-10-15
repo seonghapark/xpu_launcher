@@ -40,10 +40,16 @@ class _FakeRouter:
     def __init__(self, on_pull):
         self._on_pull = on_pull
         self.pulled_versions: list[int] = []
+        self.pull_model_state_dict = _PullEndpoint(self)
 
-    async def pull_model_state_dict(self, *, policy_version):
-        self.pulled_versions.append(policy_version)
-        await self._on_pull()
+
+class _PullEndpoint:
+    def __init__(self, router):
+        self._router = router
+
+    async def call_one(self, policy_version):
+        self._router.pulled_versions.append(policy_version)
+        await self._router._on_pull()
 
 
 class _FakeBuffer:
@@ -61,12 +67,12 @@ async def _noop():
     return None
 
 
-def _manager(*, trainer, router, buffer, num_groups_per_train_step=8):
+def _manager(*, trainer, router, buffer, num_prompts_per_train_step=8):
     return WeightSyncManager(
         trainer=trainer,
         generator_router=router,
         group_buffer=buffer,
-        num_groups_per_train_step=num_groups_per_train_step,
+        num_prompts_per_train_step=num_prompts_per_train_step,
     )
 
 
@@ -128,14 +134,14 @@ def test_start_async_push_pull_returns_before_work_runs() -> None:
     asyncio.run(run())
 
 
-def test_buffer_release_uses_num_groups_per_train_step_and_trained_reason() -> None:
+def test_buffer_release_uses_num_prompts_per_train_step_and_trained_reason() -> None:
     async def run() -> None:
         buffer = _FakeBuffer()
         wsm = _manager(
             trainer=_FakeTrainer(_noop),
             router=_FakeRouter(_noop),
             buffer=buffer,
-            num_groups_per_train_step=5,
+            num_prompts_per_train_step=5,
         )
         wsm.start_async_push_pull(version=3)
         await wsm.wait_prev_pull()

@@ -112,15 +112,20 @@ class StateDictAdapter(BaseStateDictAdapter):
 
     def _validate_hf_rope_config(
         self,
-        expected_rope_cls: type,
+        expected_rope_cls: type | tuple[type, ...],
     ) -> None:
         for layer in self.model_config.layers:  # pyrefly: ignore [missing-attribute]
             rope = layer.attention.rope
             if not isinstance(rope, expected_rope_cls):
-                expected_name = expected_rope_cls.__qualname__
+                candidates = (
+                    expected_rope_cls
+                    if isinstance(expected_rope_cls, tuple)
+                    else (expected_rope_cls,)
+                )
+                expected_name = " or ".join(c.__qualname__ for c in candidates)
                 raise ValueError(
                     f"HF checkpoint conversion assumes {expected_name}; "
-                    f"got {type(rope).__name__}."
+                    f"got {type(rope).__qualname__}."
                 )
 
     def get_hf_storage_reader(

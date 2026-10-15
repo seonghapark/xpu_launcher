@@ -111,14 +111,17 @@ if [[ $# -lt 1 ]]; then
   exit 1
 fi
 
-# Detect NNODES from PBS context if available
+# Detect NNODES from PBS context if available.
+#
+# Counts DISTINCT hosts, not lines: some schedulers write one PBS_NODEFILE line
+# per slot/core, which would otherwise inflate NNODES by ~208x on Aurora.
 detect_nnodes() {
   if [[ -n "${NNODES:-}" ]]; then
     return  # Already set
   fi
 
   if [[ -n "${PBS_NODEFILE:-}" && -f "${PBS_NODEFILE:-}" ]]; then
-    NNODES=$(wc -l < "$PBS_NODEFILE")
+    NNODES=$(awk 'NF {print $1}' "$PBS_NODEFILE" | sort -u | wc -l)
   fi
 }
 
@@ -321,6 +324,19 @@ if [[ -z "$NNODES" ]]; then
   NNODES=1
 fi
 
+# Export NNODES so it reaches the actual launcher.
+#
+# BUG FIXED 2026-10-13: NNODES was computed here but never exported, so
+# run_train.sh saw it unset. With no NNODES and no HOSTFILE, run_train.sh falls
+# through to the bare `-ppn` branch of its topology block (run_train.sh:206-211)
+# and `xpu launch` defaults to a SINGLE node -- silently, with exit 0.
+#
+# Observed: job 8923308 requested select=4 but trained on 12 ranks (dp_shard=12)
+# while every banner said "Nodes = 4". Any multi-node run through this wrapper
+# before this date was almost certainly single-node. Downstream never
+# second-guesses this: it only adds -n/-nh when one of these two is set.
+export NNODES
+
 # Build calculator args
 CALC_ARGS=("--model" "$MODEL" "--nnodes" "$NNODES")
 [[ -n "$TP" ]] && CALC_ARGS+=(--tp "$TP")
@@ -371,6 +387,19 @@ if [[ -z "$LOG_DIR" ]]; then
 fi
 
 mkdir -p "$LOG_DIR"
+
+# Make the hostfile explicit (needs LOG_DIR, hence placed here). In a PBS job
+# with no positional hostfile, derive one from PBS_NODEFILE (deduplicated)
+# instead of relying on auto-detection, so run_train.sh takes its hostfile
+# branch (run_train.sh:183-197) and computes NPROC = NNODES * NPROC_PER_NODE
+# against a host list that is on disk and auditable after the run.
+if [[ "$MODE" == "multi" && -z "$HOSTFILE" ]]; then
+  if [[ -n "${PBS_NODEFILE:-}" && -f "${PBS_NODEFILE:-}" ]]; then
+    HOSTFILE="${LOG_DIR}/agpt_hosts.txt"
+    awk 'NF {print $1}' "$PBS_NODEFILE" | sort -u > "$HOSTFILE"
+    echo "[INFO] derived hostfile from PBS_NODEFILE: $HOSTFILE ($(wc -l < "$HOSTFILE") hosts)" >&2
+  fi
+fi
 
 TORCHTITAN_LAUNCH_SCRIPT="${SCRIPT_DIR}/run_train_torchtitan.sh"
 if [[ ! -x "$TORCHTITAN_LAUNCH_SCRIPT" ]]; then

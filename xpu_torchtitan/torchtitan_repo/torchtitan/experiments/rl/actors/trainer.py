@@ -11,11 +11,11 @@ from typing import Any
 
 import torch
 import torchstore as ts
-from monarch.actor import Actor, current_rank, endpoint
+from monarch.actor import Actor, concurrent_endpoint, current_rank
 from torchtitan.components.checkpoint import CheckpointManager
+from torchtitan.components.checkpoint_utils import canonical_fqn
 from torchtitan.components.loss import BaseLoss, ChunkedLossWrapper
-from torchtitan.components.lr_scheduler import LRSchedulersContainer
-from torchtitan.components.optimizer import OptimizersContainer
+from torchtitan.components.optimizer import LRSchedulersContainer, OptimizersContainer
 from torchtitan.config import (
     apply_overrides,
     CommConfig,
@@ -81,8 +81,8 @@ class PolicyTrainer(Actor, Configurable):
             default_factory=CheckpointManager.Config
         )
         override: OverrideConfig = field(default_factory=OverrideConfig)
-        """Config overrides (e.g. ``torchtitan.overrides.fused_swiglu``) applied to
-        this trainer's model spec after ``update_from_config`` and before build.
+        """Config overrides (e.g. ``torchtitan.overrides.fused_swiglu.fused_swiglu``)
+        applied to this trainer's model spec after ``update_from_config`` and before build.
         Separate from the generator's override so the two can differ."""
         dump_folder: str = ""
         """Folder for AC debug dumps when using memory_budget mode."""
@@ -98,6 +98,8 @@ class PolicyTrainer(Actor, Configurable):
         output_dir: str,
     ):
         init_logger()
+        # Quiet torchstore's per-op transport-resolve INFO spam (very noisy in CI).
+        logging.getLogger("torchstore.transport").setLevel(logging.WARNING)
         if not config.dump_folder:
             config.dump_folder = output_dir
         sl.init_structured_logger(
@@ -121,7 +123,7 @@ class PolicyTrainer(Actor, Configurable):
 
         # Device setup
         device_module, device_type = utils.device_module, utils.device_type
-        self.device = torch.device(f"{device_type}:{int(os.environ['LOCAL_RANK'])}")
+        self.device = utils.get_local_device()
         device_module.set_device(self.device)
 
         # Enable batch-invariant mode BEFORE init_distributed
@@ -219,13 +221,13 @@ class PolicyTrainer(Actor, Configurable):
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         self.policy_version = state_dict["policy_version"]
 
-    @endpoint
+    @concurrent_endpoint
     async def get_policy_version(self) -> int:
         """Current policy version: after load(), the step a resume restored from
         (0 if fresh). The controller uses it to resume and re-sync generators."""
         return self.policy_version
 
-    @endpoint
+    @concurrent_endpoint
     async def close(self) -> None:
         """Close actor-local resources before the process mesh stops.
 
@@ -309,7 +311,7 @@ class PolicyTrainer(Actor, Configurable):
 
         return model
 
-    @endpoint
+    @concurrent_endpoint
     async def sync_log_step(self, step: int, relative_step: int | None = None) -> None:
         """Sync the structured-logger step counter from the controller."""
         sl.set_step(step, relative_step=relative_step)
@@ -348,7 +350,7 @@ class PolicyTrainer(Actor, Configurable):
         )
         return out
 
-    @endpoint
+    @concurrent_endpoint
     @sl.log_trace_span("forward_backward")
     async def forward_backward(
         self,
@@ -360,9 +362,8 @@ class PolicyTrainer(Actor, Configurable):
         Args:
             training_data: List of TrainingMicrobatch, one per DP rank. Local rank
                 picks training_data[self.dp_rank].
-            num_global_valid_tokens: Total response tokens across all DP
-                ranks for this step. The controller computes this before
-                sharding training_samples.
+            num_global_valid_tokens: Total response tokens with finite generator
+                logprobs across all DP ranks and microbatches for this step.
 
         Returns:
             dict[str, float]: Globally-reduced metrics.
@@ -426,7 +427,7 @@ class PolicyTrainer(Actor, Configurable):
             max_reduced_metrics=max_reduced_metrics,
         )
 
-    @endpoint
+    @concurrent_endpoint
     @sl.log_trace_span("optim_step")
     async def optim_step(self) -> OptimStepOutput:
         """Clip gradients, step optimizer + LR scheduler, return updated state."""
@@ -438,7 +439,7 @@ class PolicyTrainer(Actor, Configurable):
         if len(current_lrs) != 1:
             raise ValueError(
                 "RL metrics only support a single optimizer LR for "
-                f"train/lr; got {current_lrs}"
+                f"trainer/lr; got {current_lrs}"
             )
         current_lr = float(current_lrs[0])
 
@@ -466,13 +467,13 @@ class PolicyTrainer(Actor, Configurable):
         return OptimStepOutput(
             policy_version=self.policy_version,
             metrics={
-                "train/grad_norm/mean": float(grad_norm.item()),
-                "train/lr": current_lr,
-                "train/policy_version": float(self.policy_version),
+                "trainer/grad_norm/mean": float(grad_norm.item()),
+                "trainer/lr": current_lr,
+                "trainer/policy_version": float(self.policy_version),
             },
         )
 
-    @endpoint
+    @concurrent_endpoint
     @sl.log_trace_span("save_checkpoint")
     async def save_checkpoint(self, step: int, last_step: bool = False) -> bool:
         """Save checkpoint via CheckpointManager.
@@ -486,7 +487,7 @@ class PolicyTrainer(Actor, Configurable):
         """
         return self.checkpointer.save(step, last_step=last_step)
 
-    @endpoint
+    @concurrent_endpoint
     @sl.log_trace_span("push_model_state_dict")
     async def push_model_state_dict(self) -> None:
         """Stage model weights to a CPU StorageVolume for the generators to pull (TorchStore).
@@ -503,9 +504,12 @@ class PolicyTrainer(Actor, Configurable):
             # expert_bias_E load-balance bias in MoE. The generator keeps those buffers at the same
             # registered dtype, so casting them here would mismatch its state dict and fail torchstore's
             # dtype check on weight sync.
+            # Strip the AC wrapper's `_checkpoint_wrapped_module` segment so buffer FQNs match state_dict() keys.
             # TODO(async-rl): remove this manual cast once torchstore applies transfer_dtype on the
             #   CPU-staged path.
-            buffer_names = {name for name, _ in self.model.named_buffers()}
+            buffer_names = {
+                canonical_fqn(name) for name, _ in self.model.named_buffers()
+            }
             state_dict = {
                 name: (
                     tensor if name in buffer_names else tensor.to(self._transfer_dtype)

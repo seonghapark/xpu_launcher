@@ -63,7 +63,15 @@ class RoPE(Module):
         beta_fast: float = 32.0
         beta_slow: float = 1.0
         original_seq_len: int = 4096
-        mscale: float = 0.0
+        # NOTE: there is deliberately no ``mscale`` field here. The YaRN
+        # attention-temperature factor is derived, not configured: both
+        # backends compute 1 + 0.1*ln(rope_factor) themselves
+        # (``ComplexRoPE._get_mscale``, ``CosSinRoPE._precompute_cache``).
+        # A field of that name existed until 2026-10-12, defaulted to 0.0 and
+        # was read by nothing; its only effect was to make the trainer banner
+        # log a false "RoPE mscale: 0.0". Upstream 0.3.0 has no such field
+        # either. DeepSeek-V3's ``mscale`` is unrelated and lives on its
+        # *attention* config (``deepseek_v3/model.py``), where it is live.
 
     def __init__(self, config: Config):
         super().__init__()
@@ -244,6 +252,15 @@ class ComplexRoPE(RoPE):
                         max_seq_len,
                     )
                 )
+                # Order-normalize: ``find_correction_dim`` is monotonically
+                # DECREASING in num_rotations, so whichever of beta_fast /
+                # beta_slow is larger yields the smaller dim index. Sorting
+                # here makes the result independent of which convention the
+                # caller used (ComplexRoPE and CosSinRoPE historically read
+                # these two fields in opposite orders), so a swapped pair can
+                # never silently produce an inverted, empty range.
+                if low > high:
+                    low, high = high, low
                 return max(low, 0), min(high, dim - 1)
 
             def linear_ramp_factor(
@@ -462,6 +479,11 @@ class CosSinRoPE(RoPE):
                 * math.log(cfg.original_seq_len / (cfg.beta_fast * 2 * math.pi))
                 / math.log(base)
             )
+            # Order-normalize so the correction range does not depend on which
+            # of beta_fast / beta_slow the caller treated as the larger value.
+            # See the matching comment in ComplexRoPE.find_correction_range.
+            if low > high:
+                low, high = high, low
             assert (
                 0 < low < high < d_half - 1
             ), f"Invalid YaRN params: 0 < {low} < {high} < {d_half - 1}"

@@ -22,15 +22,15 @@ TT_CONFIG_JSON_ENV = "TT_CONFIG_JSON"
 
 
 def agpt_debugmodel() -> Trainer.Config:
-    return ezpz_agpt_debugmodel()
+    return agpt("debugmodel", local_batch_size=2)
 
 
 def agpt_2b() -> Trainer.Config:
-    return ezpz_agpt_2b()
+    return agpt("2b", activation_checkpoint_mode="none")
 
 
 def agpt_2b_hf() -> Trainer.Config:
-    cfg = ezpz_agpt_2b()
+    cfg = agpt_2b()
     cfg.dataloader.dataset_path = None
     return cfg
 
@@ -79,29 +79,25 @@ def agpt_2b_real() -> Trainer.Config:
     eliminating the eager fallback inside the compiled graph
     improves XPU throughput.
     """
-    return _set_rope_backend(ezpz_agpt_2b(), "cos_sin")
+    return _set_rope_backend(agpt_2b(), "cos_sin")
 
 
 def agpt_2b_flex_attn() -> Trainer.Config:
-    return ezpz_agpt_2b_flex_attn()
+    return agpt("2b_flex_attn", local_batch_size=2)
 
 
 def agpt_7b() -> Trainer.Config:
-    return ezpz_agpt_7b()
+    return agpt("7b", local_batch_size=2, seq_len=4096, hf_assets_path="./assets/hf/llama-2-7b-hf")
 
 
 def agpt_7b_hf() -> Trainer.Config:
-    cfg = ezpz_agpt_7b()
+    cfg = agpt_7b()
     cfg.dataloader.dataset_path = None
     return cfg
 
 
-def ezpz_agpt_8b() -> Trainer.Config:
-    return _base_config("8B")
-
-
 def agpt_8b() -> Trainer.Config:
-    return ezpz_agpt_8b()
+    return _base_config("8B")
 
 
 def agpt(
@@ -184,8 +180,6 @@ def _base_config(flavor: str) -> Trainer.Config:
         # held-out samples instead of the train split.
         # Default enable=False keeps prior behavior; flip per config or via
         # --validator.enable on the CLI.
-        # Uses EzpzValidator (subclass of Validator) which fixes loss
-        # reporting on TP > 1 — see torchtitan/experiments/ezpz/validator.py.
         validator=Validator.Config(
             enable=False,
             freq=200,
@@ -198,41 +192,21 @@ def _base_config(flavor: str) -> Trainer.Config:
     )
 
 
-def ezpz_agpt_debugmodel() -> Trainer.Config:
-    return agpt("debugmodel", local_batch_size=2)
-
-
-def ezpz_agpt_2b() -> Trainer.Config:
-    return agpt("2b", activation_checkpoint_mode="none")
-
-
 def agpt_2b_chunkedce() -> Trainer.Config:
     """agpt_2b with ChunkedLossWrapper to keep peak memory low.
 
     With vocab=256128 the unchunked logits are ~16 GB at LBS=2 / seq=8192,
     which OOMs on Aurora's 64 GB tiles. ChunkedLossWrapper(num_chunks=8) caps
-    the peak slice at ~2 GB. Set lm_head module reference at trainer init
-    via the set_lm_head plumbing in `experiments/ezpz/trainer.py`.
+    the peak slice at ~2 GB. The lm_head module reference is set at trainer
+    init via the set_lm_head plumbing in `torchtitan/trainer.py`.
     """
-    cfg = ezpz_agpt_2b()
+    cfg = agpt_2b()
     cfg.loss = ChunkedLossWrapper.Config(num_chunks=8)
     return cfg
 
 
-def ezpz_agpt_2b_flex_attn() -> Trainer.Config:
-    return agpt("2b_flex_attn", local_batch_size=2)
-
-
-def ezpz_agpt_20b_flex_attn() -> Trainer.Config:
-    return agpt("20b_flex_attn")
-
-
 def agpt_20b_flex_attn() -> Trainer.Config:
     return agpt("20b_flex_attn")
-
-
-def ezpz_agpt_7b() -> Trainer.Config:
-    return agpt("7b", local_batch_size=2, seq_len=4096, hf_assets_path="./assets/hf/llama-2-7b-hf")
 
 
 def _load_json_overrides() -> dict[str, Any]:
@@ -283,30 +257,26 @@ def _config_from_json(flavor: str) -> Trainer.Config:
     return cfg
 
 
-def ezpz_agpt_debugmodel_from_json() -> Trainer.Config:
+def agpt_debugmodel_from_json() -> Trainer.Config:
     return _config_from_json("debugmodel")
 
 
-def ezpz_agpt_2b_from_json() -> Trainer.Config:
+def agpt_2b_from_json() -> Trainer.Config:
     return _config_from_json("2b")
 
 
-def ezpz_agpt_7b_from_json() -> Trainer.Config:
+def agpt_7b_from_json() -> Trainer.Config:
     return _config_from_json("7b")
 
 
-def ezpz_agpt_8b_from_json() -> Trainer.Config:
+def agpt_8b_from_json() -> Trainer.Config:
     return _config_from_json("8B")
 
 
-def ezpz_agpt_blendcorpus_debugmodel() -> Trainer.Config:
+def agpt_blendcorpus_debugmodel() -> Trainer.Config:
     cfg = _base_config("debugmodel")
     cfg.dataloader.dataset = "pg19_multinews"
     return cfg
-
-
-def ezpz_agpt_20b() -> Trainer.Config:
-    return agpt("20b")
 
 
 def agpt_20b() -> Trainer.Config:
@@ -315,42 +285,26 @@ def agpt_20b() -> Trainer.Config:
 
 def agpt_20b_chunkedce() -> Trainer.Config:
     """agpt_20b with ChunkedLossWrapper. See agpt_2b_chunkedce for rationale."""
-    cfg = ezpz_agpt_20b()
+    cfg = agpt_20b()
     cfg.loss = ChunkedLossWrapper.Config(num_chunks=8)
     return cfg
 
 
 def agpt_20b_real() -> Trainer.Config:
     """agpt_20b with real-valued (cos_sin) RoPE. See agpt_2b_real."""
-    return _set_rope_backend(ezpz_agpt_20b(), "cos_sin")
-
-
-def ezpz_agpt_50b() -> Trainer.Config:
-    return agpt("50b")
+    return _set_rope_backend(agpt_20b(), "cos_sin")
 
 
 def agpt_50b() -> Trainer.Config:
     return agpt("50b")
 
 
-def ezpz_agpt_50b_wide() -> Trainer.Config:
-    return agpt("50B_wide", tensor_parallel_degree=2)
-
-
 def agpt_50b_wide() -> Trainer.Config:
     return agpt("50B_wide", tensor_parallel_degree=2)
 
 
-def ezpz_agpt_70b_wide() -> Trainer.Config:
-    return agpt("70B_wide", tensor_parallel_degree=2)
-
-
 def agpt_70b_wide() -> Trainer.Config:
     return agpt("70B_wide", tensor_parallel_degree=2)
-
-
-def ezpz_agpt_80b() -> Trainer.Config:
-    return agpt("80B", tensor_parallel_degree=2)
 
 
 def agpt_80b() -> Trainer.Config:
@@ -359,49 +313,33 @@ def agpt_80b() -> Trainer.Config:
 
 def agpt_80b_chunkedce() -> Trainer.Config:
     """agpt_80b with ChunkedLossWrapper. See agpt_2b_chunkedce for rationale."""
-    cfg = ezpz_agpt_80b()
+    cfg = agpt_80b()
     cfg.loss = ChunkedLossWrapper.Config(num_chunks=8)
     return cfg
 
 
 def agpt_80b_real() -> Trainer.Config:
     """agpt_80b with real-valued (cos_sin) RoPE. See agpt_2b_real."""
-    return _set_rope_backend(ezpz_agpt_80b(), "cos_sin")
-
-
-def ezpz_agpt_80b_alt() -> Trainer.Config:
-    return agpt("80B_alt", tensor_parallel_degree=2)
+    return _set_rope_backend(agpt_80b(), "cos_sin")
 
 
 def agpt_80b_alt() -> Trainer.Config:
     return agpt("80B_alt", tensor_parallel_degree=2)
 
 
-def ezpz_agpt_80b_wide() -> Trainer.Config:
-    return agpt("80B_wide", tensor_parallel_degree=2)
-
-
 def agpt_80b_wide() -> Trainer.Config:
     return agpt("80B_wide", tensor_parallel_degree=2)
-
-
-def ezpz_agpt_80b_deep() -> Trainer.Config:
-    return agpt("80B_deep", tensor_parallel_degree=2)
 
 
 def agpt_80b_deep() -> Trainer.Config:
     return agpt("80B_deep", tensor_parallel_degree=2)
 
 
-def ezpz_agpt_80b_deep_alt() -> Trainer.Config:
-    return agpt("80B_deep_alt", tensor_parallel_degree=2)
-
-
 def agpt_80b_deep_alt() -> Trainer.Config:
     return agpt("80B_deep_alt", tensor_parallel_degree=2)
 
 
-def agpt_2b_yarn(seq_len: int = 32768) -> Trainer.Config:
+def agpt_2b_yarn() -> Trainer.Config:
     """Continue-pretrain agpt-2b with YaRN-scaled RoPE for context extension.
 
     Loads the existing agpt-2b model weights from HF format
@@ -409,35 +347,35 @@ def agpt_2b_yarn(seq_len: int = 32768) -> Trainer.Config:
     original 8192 pretraining length. Per the YaRN paper (arxiv.org/abs/2309.00071),
     only a small number of additional steps (~400) at the target length are needed
     for effective context extension.
+
+    The context length comes solely from ``training.seq_len``. The value set
+    here is only its default, which ``--training.seq_len`` overrides; nothing
+    is derived from it at this point, because ConfigManager calls this function
+    with no arguments and applies CLI overrides only afterwards, so any length
+    read here would be stale. The RoPE max_seq_len and rope_factor are instead
+    synced from ``training.seq_len`` in ``AgptModel.Config.update_from_config``,
+    which runs after tyro and before the model is built.
     """
-    return agpt("2b_yarn", seq_len=seq_len, activation_checkpoint_mode="none")
+    return agpt("2b_yarn", seq_len=32768, activation_checkpoint_mode="none")
 
 
-def agpt_20b_yarn(seq_len: int = 32768) -> Trainer.Config:
+def agpt_20b_yarn() -> Trainer.Config:
     """Continue-pretrain agpt-20b with YaRN-scaled RoPE for context extension.
 
     See agpt_2b_yarn for details.
     """
-    return agpt("20b_yarn", seq_len=seq_len)
+    return agpt("20b_yarn", seq_len=32768)
 
 
-def ezpz_agpt_2b_yarn(seq_len: int = 32768) -> Trainer.Config:
-    return agpt_2b_yarn(seq_len=seq_len)
-
-
-def ezpz_agpt_20b_yarn(seq_len: int = 32768) -> Trainer.Config:
-    return agpt_20b_yarn(seq_len=seq_len)
-
-
-def ezpz_agpt_80b_from_json() -> Trainer.Config:
+def agpt_80b_from_json() -> Trainer.Config:
     return _config_from_json("80B")
 
 
-def ezpz_agpt_80b_wide_from_json() -> Trainer.Config:
+def agpt_80b_wide_from_json() -> Trainer.Config:
     return _config_from_json("80B_wide")
 
 
-def ezpz_agpt_80b_deep_from_json() -> Trainer.Config:
+def agpt_80b_deep_from_json() -> Trainer.Config:
     return _config_from_json("80B_deep")
 
 

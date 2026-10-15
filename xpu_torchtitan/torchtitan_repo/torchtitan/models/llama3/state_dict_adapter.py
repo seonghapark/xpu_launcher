@@ -13,7 +13,7 @@ from torch.distributed.tensor import DTensor
 
 logger = logging.getLogger()
 
-from torchtitan.models.common.rope import ComplexRoPE
+from torchtitan.models.common.rope import ComplexRoPE, CosSinRoPE
 from torchtitan.protocols.state_dict_adapter import StateDictAdapter
 from .model import Llama3Model
 
@@ -44,6 +44,26 @@ class Llama3StateDictAdapter(StateDictAdapter):
             "model.norm.weight": "norm.weight",
             "lm_head.weight": "lm_head.weight",
         }
+
+    def _rope_cls(self) -> type:
+        """Return the RoPE config class this model's layers use.
+
+        All layers share one RoPE flavor, so layer 0 is representative.
+        """
+        # pyrefly: ignore [missing-attribute]
+        return type(self.model_config.layers[0].attention.rope)
+
+    def _needs_qk_permute(self) -> bool:
+        """Whether Q/K need the HF<->Meta rotary row permutation.
+
+        The permutation converts between HF's half-split rotate_half layout
+        (rows i and i + head_dim/2 form a rotary pair) and Meta's interleaved
+        layout (rows 2i and 2i+1 form a pair) that ``ComplexRoPE`` consumes via
+        ``view_as_complex``. ``CosSinRoPE`` already implements HF's rotate_half
+        convention, so for those models the HF weights are used as-is and
+        permuting would corrupt them.
+        """
+        return issubclass(self._rope_cls(), ComplexRoPE.Config)
 
     # HuggingFace permutation function (exact copy from their conversion script)
     # Modified to handle FSDP-sharded tensors during reshape operations
@@ -106,6 +126,7 @@ class Llama3StateDictAdapter(StateDictAdapter):
         hf_state_dict = {}
 
         to_hf_map = {v: k for k, v in self.from_hf_map.items() if v is not None}
+        permute_qk = self._needs_qk_permute()
 
         for key, value in state_dict.items():
             if "layers" in key:
@@ -117,12 +138,14 @@ class Llama3StateDictAdapter(StateDictAdapter):
                 if new_key is None:
                     continue
 
-                # Apply HF permutation for Q/K weights
-                if abstract_key == "layers.{}.attention.qkv_linear.wq.weight":
-                    value = self._permute(value, n_heads)
-                if abstract_key == "layers.{}.attention.qkv_linear.wk.weight":
-                    key_value_dim = head_dim * n_kv_heads
-                    value = self._permute(value, n_kv_heads, key_value_dim, dim)
+                # Apply HF permutation for Q/K weights (ComplexRoPE only --
+                # CosSinRoPE already uses HF's rotate_half layout).
+                if permute_qk:
+                    if abstract_key == "layers.{}.attention.qkv_linear.wq.weight":
+                        value = self._permute(value, n_heads)
+                    if abstract_key == "layers.{}.attention.qkv_linear.wk.weight":
+                        key_value_dim = head_dim * n_kv_heads
+                        value = self._permute(value, n_kv_heads, key_value_dim, dim)
 
                 new_key = new_key.format(layer_num)
             else:
@@ -140,7 +163,7 @@ class Llama3StateDictAdapter(StateDictAdapter):
         return hf_state_dict
 
     def from_hf(self, hf_state_dict: dict[str, Any]) -> dict[str, Any]:
-        self._validate_hf_rope_config(ComplexRoPE.Config)
+        self._validate_hf_rope_config((ComplexRoPE.Config, CosSinRoPE.Config))
         if (
             self.model_config.enable_weight_tying  # pyrefly: ignore [missing-attribute]
             and "lm_head.weight" not in hf_state_dict
@@ -155,6 +178,7 @@ class Llama3StateDictAdapter(StateDictAdapter):
         dim = self.model_config.dim  # pyrefly: ignore [missing-attribute]
         head_dim = attn.head_dim or dim // n_heads
         state_dict = {}
+        permute_qk = self._needs_qk_permute()
 
         for key, value in hf_state_dict.items():
             if "layers" in key:
@@ -162,12 +186,16 @@ class Llama3StateDictAdapter(StateDictAdapter):
                 # pyrefly: ignore [missing-attribute]
                 layer_num = re.search(r"\d+", key).group(0)
 
-                # Reverse-permute Q and K for RoPE compatibility
-                if abstract_key == "model.layers.{}.self_attn.q_proj.weight":
-                    value = self._reverse_permute(value, n_heads)
-                if abstract_key == "model.layers.{}.self_attn.k_proj.weight":
-                    key_value_dim = head_dim * n_kv_heads
-                    value = self._reverse_permute(value, n_kv_heads, key_value_dim, dim)
+                # Reverse-permute Q and K for RoPE compatibility (ComplexRoPE
+                # only -- CosSinRoPE consumes HF's layout directly).
+                if permute_qk:
+                    if abstract_key == "model.layers.{}.self_attn.q_proj.weight":
+                        value = self._reverse_permute(value, n_heads)
+                    if abstract_key == "model.layers.{}.self_attn.k_proj.weight":
+                        key_value_dim = head_dim * n_kv_heads
+                        value = self._reverse_permute(
+                            value, n_kv_heads, key_value_dim, dim
+                        )
 
                 new_key = self.from_hf_map[abstract_key]
                 if new_key is None:

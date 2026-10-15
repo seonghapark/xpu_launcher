@@ -237,12 +237,15 @@ xpu submit --hostfile /path/to/hosts --nproc 8 --nproc-per-node 4 --command "pyt
 
 ## Training templates
 
-Two executable helper scripts are included in this repo:
+Executable helper scripts included in this repo:
 
 - `xpu_torchtitan/run_train_torchtitan.sh`: `xpu launch` wrapper for real TorchTitan training.
-- `run_train_non_torchtitan.sh`: `xpu launch` wrapper for generic Python training scripts.
+- `xpu_torchtitan/run_train_agpt.sh`: AGPT wrapper over the above, with sizes
+  (`2b`/`20b`/`80b`) resolved by `xpu_torchtitan/calculate_agpt_params.sh`.
+- `dcp_to_hf.py`: converts a TorchTitan DCP checkpoint to HF safetensors.
+- `run_convert_and_train.sh`: converts if needed, then trains in one step.
 
-Both support single-node and multi-node modes.
+All support single-node and multi-node modes.
 
 ### TorchTitan template
 
@@ -347,33 +350,26 @@ Then run with `MODULE=mymodel CONFIG=mymodel_debug`. Existing example:
 `torchtitan/models/llama3/config_registry.py` (used by the defaults
 `MODULE=llama3 CONFIG=llama3_debugmodel`).
 
-### Non-TorchTitan template
+### DCP checkpoint conversion
+
+`dcp_to_hf.py` converts a TorchTitan DCP checkpoint into HF safetensors using
+TorchTitan's own `state_dict_adapter.to_hf()`, so the Q/K rotary layout follows
+the model's RoPE flavor. Convert under the flavor the checkpoint was
+**pretrained** with (e.g. `agpt_2b`), not the one you are about to train with.
 
 ```bash
-cd /lus/flare/projects/datascience/seonghapark/xpu_launcher
-
-# single node
-./run_train_non_torchtitan.sh single --dry-run -- --epochs 1
-
-# multi node
-./run_train_non_torchtitan.sh multi /path/to/hosts --dry-run -- --epochs 1
-
-# real run-style example
-MODEL_PATH=/path/to/model \
-DATASET_PATH=/path/to/dataset \
-LOG_DIR=/path/to/logs/generic1 \
-./run_train_non_torchtitan.sh multi /path/to/hosts -- --epochs 3 --lr 1e-4
+python dcp_to_hf.py \
+  --dcp-path /path/to/checkpoint/step-46400 \
+  --output   /path/to/out_hf \
+  --assets-from /path/to/base-model-safetensors \
+  -- --module agpt --config agpt_2b
 ```
 
-Key env vars for `run_train_non_torchtitan.sh`:
+`run_convert_and_train.sh` wraps this: it detects whether `MODEL` is already HF
+format (`config.json` + `*.safetensors`) or DCP (`.metadata`), converts only if
+needed, and hands off to `run_train_agpt.sh`.
 
-- `TRAIN_ENTRY` (default: `train.py`)
-- `PYTHON_BIN` (default: `python`)
-- `MODEL_PATH` (default: `/path/to/model`)
-- `DATASET_PATH` (default: `/path/to/dataset`)
-- `LOG_DIR` (default: `./outputs/xpu_generic_<timestamp>`)
-
-Both templates forward launch-related environment controls to `run_train.sh`:
+These templates forward launch-related environment controls to `run_train.sh`:
 
 - `XPU_CMD`, `SCHEDULER`, `NPROC_PER_NODE`, `NNODES`, `NPROC`
 - `AUTO_RETRY`, `SPARE_NODES`, `FAILOVER_PROFILE`, `HOST_IP_MAP`

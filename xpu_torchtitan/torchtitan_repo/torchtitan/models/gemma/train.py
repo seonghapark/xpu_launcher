@@ -104,7 +104,7 @@ def _bootstrap_dist_env() -> None:
 
     Priority for rank / world_size:
       1. Existing torchrun-style env vars (already set)
-      2. ``mpi4py.COMM_WORLD`` (authoritative under ``mpiexec`` / ezpz)
+      2. ``mpi4py.COMM_WORLD`` (authoritative under ``mpiexec``)
       3. Individual MPI-style env vars (``PMI_*``, ``PALS_*``, ``OMPI_*``)
       4. Single-process fallback (RANK=0, WORLD_SIZE=1)
 

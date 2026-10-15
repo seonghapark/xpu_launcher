@@ -116,9 +116,6 @@ class NodeAllocation:
     def scraped_bad_hosts(self) -> list[str]:
         return [r.host for r in self.bad_nodes if r.provenance == PROVENANCE_SCRAPED]
 
-    def blind_bad_hosts(self) -> list[str]:
-        return [r.host for r in self.bad_nodes if r.provenance == PROVENANCE_BLIND]
-
     def swap_in(
         self,
         bad_hosts: Sequence[str],

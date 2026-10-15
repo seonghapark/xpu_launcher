@@ -6,6 +6,7 @@
 
 import dataclasses
 import json
+import math
 import os
 import time
 from collections import deque
@@ -799,45 +800,83 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful, Configurable):
         logger.info(f"  Model Flavor: {config.model_spec.flavor}")
         logger.info(f"  Architecture: {self.model_config.__class__.__name__}")
 
-        # Check for YaRN or other positional embeddings modifications
-        if hasattr(self.model_config, 'rope_scaling'):
-            logger.info(f"  Rope Scaling Type: {getattr(self.model_config, 'rope_scaling', 'standard')}")
-        if hasattr(self.model_config, 'rope_theta'):
-            logger.info(f"  Rope Theta: {getattr(self.model_config, 'rope_theta', 'default')}")
+        # RoPE lives on each attention block, not on the top-level model config
+        # (there is no flat rope_scaling/rope_theta here). Report the backend
+        # CLASS as well as the values: it is what decides the Q/K rotary layout,
+        # so it is the first thing to check when a converted checkpoint behaves
+        # oddly. Read layer 0 -- all layers share one RoPE configuration.
+        rope = None
+        layers = getattr(self.model_config, "layers", None)
+        if layers:
+            rope = getattr(getattr(layers[0], "attention", None), "rope", None)
+        if rope is not None:
+            logger.info(f"  RoPE Backend: {type(rope).__qualname__}")
+            for name in ("theta", "scaling", "max_seq_len", "original_seq_len",
+                         "rope_factor", "beta_fast", "beta_slow"):
+                if hasattr(rope, name):
+                    logger.info(f"  RoPE {name}: {getattr(rope, name)}")
+
+            # mscale has no config field to report: RoPE.Config.mscale existed
+            # until 2026-10-12, defaulted to 0.0 and was read by nothing, so
+            # printing it logged a flat "0.0" while the value actually in force
+            # was 1 + 0.1*ln(rope_factor). The field is gone; derive the value
+            # the same way the backends do instead -- both compute the identical
+            # formula, ComplexRoPE in apply_rotary_emb and CosSinRoPE folded
+            # into its cos/sin cache.
+            scaling = getattr(rope, "scaling", None)
+            factor = getattr(rope, "rope_factor", 1.0)
+            extends = getattr(rope, "max_seq_len", 0) > getattr(
+                rope, "original_seq_len", 0
+            )
+            if scaling == "yarn" and factor > 1.0 and extends:
+                logger.info(
+                    f"  RoPE mscale (effective): {0.1 * math.log(factor) + 1.0:.6f}"
+                )
+            else:
+                logger.info("  RoPE mscale (effective): 1.0 (no YaRN extension)")
 
         # Training Parameters
         logger.info("\n[TRAINING]")
-        logger.info(f"  Learning Rate: {config.optimizer.lr}")
         logger.info(f"  Total Training Steps: {config.training.steps}")
         logger.info(f"  Sequence Length: {config.training.seq_len}")
         logger.info(f"  Global Batch Size: {config.training.global_batch_size}")
-        logger.info(f"  Micro Batch Size: {config.training.batch_size}")
+        logger.info(f"  Micro Batch Size: {config.training.local_batch_size}")
         logger.info(f"  Gradient Accumulation Steps: {self.gradient_accumulation_steps}")
         logger.info(f"  Data Type: {config.training.dtype}")
 
         # Optimizer Parameters
+        #
+        # There is no single config.optimizer.lr: ParamGroupConfig makes each
+        # param group fully self-contained (pattern + optimizer_name +
+        # optimizer_kwargs, no implicit inheritance), so lr/weight_decay/betas
+        # live per group and a run may legitimately use several. Log every
+        # group rather than inventing one headline number.
         logger.info("\n[OPTIMIZER]")
-        logger.info(f"  Optimizer Type: {config.optimizer.__class__.__name__}")
-        logger.info(f"  Learning Rate: {config.optimizer.lr}")
-        logger.info(f"  Weight Decay: {config.optimizer.weight_decay}")
-        if hasattr(config.optimizer, 'betas'):
-            logger.info(f"  Betas (Adam): {config.optimizer.betas}")
-        if hasattr(config.optimizer, 'eps'):
-            logger.info(f"  Epsilon: {config.optimizer.eps}")
+        param_groups = getattr(config.optimizer, "param_groups", None) or []
+        logger.info(f"  Parameter Groups: {len(param_groups)}")
+        for i, group in enumerate(param_groups):
+            logger.info(f"  [group {i}] pattern: {group.pattern}")
+            logger.info(f"  [group {i}] optimizer: {group.optimizer_name}")
+            for key, value in sorted(group.optimizer_kwargs.items()):
+                logger.info(f"  [group {i}]   {key}: {value}")
+        logger.info(f"  Implementation: {config.optimizer.implementation}")
 
         # Learning Rate Scheduler
         logger.info("\n[LR SCHEDULER]")
         logger.info(f"  LR Scheduler Type: {config.lr_scheduler.__class__.__name__}")
-        if hasattr(config.lr_scheduler, 'warmup_steps'):
-            logger.info(f"  Warmup Steps: {config.lr_scheduler.warmup_steps}")
-        if hasattr(config.lr_scheduler, 'min_lr_ratio'):
-            logger.info(f"  Min LR Ratio: {config.lr_scheduler.min_lr_ratio}")
+        logger.info(f"  Warmup Steps: {config.lr_scheduler.warmup_steps}")
+        logger.info(f"  Total Steps: {config.lr_scheduler.total_steps}")
+        logger.info(f"  Decay Ratio: {config.lr_scheduler.decay_ratio}")
+        logger.info(f"  Decay Type: {config.lr_scheduler.decay_type}")
+        logger.info(f"  Min LR Factor: {config.lr_scheduler.min_lr_factor}")
 
         # Parallelism Configuration
         logger.info("\n[PARALLELISM]")
         logger.info(f"  Tensor Parallel Size (TP): {parallel_dims.tp}")
         logger.info(f"  Pipeline Parallel Size (PP): {parallel_dims.pp}")
-        logger.info(f"  Data Parallel Size (DP): {parallel_dims.dp}")
+        # ParallelDims splits DP into replicate x shard; there is no single .dp.
+        logger.info(f"  Data Parallel Replicate: {parallel_dims.dp_replicate}")
+        logger.info(f"  Data Parallel Shard (FSDP): {parallel_dims.dp_shard}")
         logger.info(f"  Context Parallel Size (CP): {parallel_dims.cp}")
         logger.info(f"  SPMD Backend: {config.parallelism.spmd_backend}")
 
@@ -866,19 +905,26 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful, Configurable):
             logger.info(f"  Model Config: {model_config_path}")
 
         # Model Architecture Details (if available)
+        # Head counts live on the attention block, and the layer count is the
+        # length of the layers list -- there is no flat n_layers/n_heads on the
+        # model config, so reading them from there logged nothing at all.
         logger.info("\n[ARCHITECTURE DETAILS]")
         if hasattr(self.model_config, 'dim'):
             logger.info(f"  Hidden Dimension: {self.model_config.dim}")
-        if hasattr(self.model_config, 'n_layers'):
-            logger.info(f"  Number of Layers: {self.model_config.n_layers}")
-        if hasattr(self.model_config, 'n_heads'):
-            logger.info(f"  Number of Attention Heads: {self.model_config.n_heads}")
-        if hasattr(self.model_config, 'n_kv_heads'):
-            logger.info(f"  Number of KV Heads: {self.model_config.n_kv_heads}")
+        if layers is not None:
+            logger.info(f"  Number of Layers: {len(layers)}")
         if hasattr(self.model_config, 'vocab_size'):
             logger.info(f"  Vocabulary Size: {self.model_config.vocab_size}")
-        if hasattr(self.model_config, 'intermediate_dim'):
-            logger.info(f"  Intermediate Dimension (FFN): {self.model_config.intermediate_dim}")
+        attention = getattr(layers[0], "attention", None) if layers else None
+        if attention is not None:
+            logger.info(f"  Number of Attention Heads: {attention.n_heads}")
+            logger.info(f"  Number of KV Heads: {attention.n_kv_heads}")
+            head_dim = attention.head_dim
+            if head_dim is None and hasattr(self.model_config, "dim"):
+                # Derived the same way the model does when left unset.
+                head_dim = self.model_config.dim // attention.n_heads
+            logger.info(f"  Head Dimension: {head_dim}")
+        logger.info(f"  Weight Tying: {getattr(self.model_config, 'enable_weight_tying', 'n/a')}")
 
         # Activation Checkpointing
         logger.info("\n[MEMORY OPTIMIZATION]")
@@ -891,7 +937,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful, Configurable):
         logger.info("\n[CHECKPOINT]")
         logger.info(f"  Checkpoint Enabled: {config.checkpoint.enable}")
         logger.info(f"  Checkpoint Folder: {config.checkpoint.folder}")
-        logger.info(f"  Checkpoint Interval (steps): {config.checkpoint.interval_type}")
+        logger.info(f"  Checkpoint Interval (steps): {config.checkpoint.interval}")
 
         # Distributed Configuration
         logger.info("\n[DISTRIBUTED]")
@@ -1040,8 +1086,14 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful, Configurable):
 
         logger.info(f"Training starts at step {self.step + 1}")
 
-        # Log comprehensive hyperparameters
-        self._log_training_hyperparameters()
+        # Log comprehensive hyperparameters. This banner is purely informational
+        # and reaches deep into config fields that vary by model and component,
+        # so a rename anywhere must not be able to kill a multi-node run that is
+        # otherwise ready to train -- log the failure and carry on.
+        try:
+            self._log_training_hyperparameters()
+        except Exception as e:
+            logger.warning(f"Could not log training hyperparameters: {e!r}")
 
         with config.profiler.build(
             global_step=self.step,

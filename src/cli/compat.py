@@ -20,10 +20,6 @@ def get_machine_name() -> str:
     return "unknown"
 
 
-def get_scheduler_name(explicit: Optional[str] = None) -> str:
-    return (explicit or "unknown").lower()
-
-
 def get_distributed_summary(hostfile: Optional[str] = None) -> dict[str, str]:
     """Expose selected distributed/runtime facts in a stable shape."""
     from cli import accelerators

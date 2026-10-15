@@ -24,6 +24,7 @@ from cli.compat import get_machine_name
 from cli.failover_models import NodeAllocation
 from cli.scheduler_topology import (
     Topology,
+    _read_unique_hosts,
     choose_launcher_binary,
     detect_scheduler,
     infer_topology,
@@ -137,10 +138,6 @@ def set_active_accelerator(name: Optional[str]) -> None:
     """Set the accelerator whose crash signatures augment the classifier."""
     global _active_accelerator
     _active_accelerator = None if name in (None, "none", "auto") else name
-
-
-def get_active_accelerator() -> Optional[str]:
-    return _active_accelerator
 
 
 def _get_crash_rx(profile: str) -> re.Pattern[str]:
@@ -612,22 +609,8 @@ def _build_launcher_tokens(
 
 
 def _read_hostfile(path: str) -> list[str]:
-    hosts: list[str] = []
-    seen: set[str] = set()
-    with open(path, encoding="utf-8") as fh:
-        for raw in fh:
-            host = raw.strip()
-            if not host or host in seen:
-                continue
-            seen.add(host)
-            hosts.append(host)
-    return hosts
-
-
-def _write_hostfile(path: str, hosts: Sequence[str]) -> None:
-    with open(path, "w", encoding="utf-8") as fh:
-        for host in hosts:
-            fh.write(f"{host}\n")
+    """Order-preserving unique host list, accepting a plain str path."""
+    return _read_unique_hosts(Path(path))
 
 
 def _resolve_hostfile_path(args: argparse.Namespace) -> Optional[str]:
@@ -849,11 +832,6 @@ def _has_crash_patterns(log_text: str, profile: str) -> bool:
     return False
 
 
-def _looks_like_walltime(log_text: str, profile: str) -> bool:
-    walltime_rx = _get_walltime_rx(profile)
-    return walltime_rx.search(_strip_ansi(log_text)) is not None
-
-
 def _has_unattributed_io_failure(log_text: str) -> bool:
     return _UNATTRIBUTED_IO_RX.search(_strip_ansi(log_text)) is not None
 
@@ -951,32 +929,8 @@ def _terminate_process(process: subprocess.Popen) -> None:
             process.wait()
 
 
-def _run_with_watchdog_capture(
-    cmd: Sequence[str], idle_timeout_s: int
-) -> tuple[int, str]:
-    if idle_timeout_s <= 0:
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            errors="replace",
-            bufsize=1,
-        )
-        output: list[str] = []
-        assert process.stdout is not None
-        try:
-            for line in process.stdout:
-                output.append(line)
-                sys.stdout.write(line)
-                sys.stdout.flush()
-            rc = process.wait()
-        except KeyboardInterrupt:
-            _terminate_process(process)
-            raise
-        return rc, "".join(output)
-
-    process = subprocess.Popen(
+def _popen_piped(cmd: Sequence[str]) -> "subprocess.Popen[str]":
+    return subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -984,7 +938,20 @@ def _run_with_watchdog_capture(
         errors="replace",
         bufsize=1,
     )
-    output: list[str] = []
+
+
+def _supervise(
+    process: "subprocess.Popen[str]",
+    idle_timeout_s: int,
+    output: Optional[list[str]] = None,
+) -> int:
+    """Tee a child's output and SIGTERM/SIGKILL it once it goes quiet.
+
+    Shared by the capturing and non-capturing watchdogs; pass ``output`` to
+    accumulate the lines as well as echo them. Only the return channel differs
+    between the two callers, so the kill policy lives here once -- a second
+    copy would be free to drift in its grace period or exit code.
+    """
     last_activity = time.monotonic()
     activity_lock = threading.Lock()
     reader_done = threading.Event()
@@ -994,7 +961,8 @@ def _run_with_watchdog_capture(
         assert process.stdout is not None
         try:
             for line in process.stdout:
-                output.append(line)
+                if output is not None:
+                    output.append(line)
                 sys.stdout.write(line)
                 sys.stdout.flush()
                 with activity_lock:
@@ -1007,7 +975,7 @@ def _run_with_watchdog_capture(
         while True:
             rc = process.poll()
             if rc is not None:
-                return rc, "".join(output)
+                return rc
 
             with activity_lock:
                 idle_for = time.monotonic() - last_activity
@@ -1033,7 +1001,7 @@ def _run_with_watchdog_capture(
                     )
                     process.kill()
                     process.wait()
-                return _WATCHDOG_EXIT_CODE, "".join(output)
+                return _WATCHDOG_EXIT_CODE
 
             sleep_for = min(1.0, max(0.1, idle_timeout_s - idle_for))
             time.sleep(sleep_for)
@@ -1044,6 +1012,30 @@ def _run_with_watchdog_capture(
         raise
     finally:
         reader_done.wait(timeout=2.0)
+
+
+def _run_with_watchdog_capture(
+    cmd: Sequence[str], idle_timeout_s: int
+) -> tuple[int, str]:
+    process = _popen_piped(cmd)
+    output: list[str] = []
+
+    if idle_timeout_s <= 0:
+        # No watchdog wanted, so read inline rather than paying for a thread.
+        assert process.stdout is not None
+        try:
+            for line in process.stdout:
+                output.append(line)
+                sys.stdout.write(line)
+                sys.stdout.flush()
+            rc = process.wait()
+        except KeyboardInterrupt:
+            _terminate_process(process)
+            raise
+        return rc, "".join(output)
+
+    rc = _supervise(process, idle_timeout_s, output)
+    return rc, "".join(output)
 
 
 def _run_with_auto_retry(
@@ -1344,76 +1336,11 @@ def _run_with_auto_retry(
 
 def _run_with_watchdog(cmd: Sequence[str], idle_timeout_s: int) -> int:
     if idle_timeout_s <= 0:
+        # Inherit stdio instead of piping: without a watchdog there is nothing
+        # to read for, and this keeps the child's TTY behaviour intact.
         return subprocess.run(cmd, check=False).returncode
 
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        errors="replace",
-        bufsize=1,
-    )
-
-    last_activity = time.monotonic()
-    activity_lock = threading.Lock()
-    reader_done = threading.Event()
-
-    def _drain_output() -> None:
-        nonlocal last_activity
-        assert process.stdout is not None
-        try:
-            for line in process.stdout:
-                sys.stdout.write(line)
-                sys.stdout.flush()
-                with activity_lock:
-                    last_activity = time.monotonic()
-        finally:
-            reader_done.set()
-
-    threading.Thread(target=_drain_output, daemon=True).start()
-
-    try:
-        while True:
-            rc = process.poll()
-            if rc is not None:
-                return rc
-
-            with activity_lock:
-                idle_for = time.monotonic() - last_activity
-
-            if idle_for >= idle_timeout_s:
-                print(
-                    (
-                        f"xpu watchdog: no output for {idle_for:.1f}s "
-                        f"(timeout={idle_timeout_s}s). Sending SIGTERM to PID {process.pid}."
-                    ),
-                    file=sys.stderr,
-                )
-                process.terminate()
-                try:
-                    process.wait(timeout=_WATCHDOG_KILL_GRACE_S)
-                except subprocess.TimeoutExpired:
-                    print(
-                        (
-                            f"xpu watchdog: PID {process.pid} still alive after "
-                            f"{int(_WATCHDOG_KILL_GRACE_S)}s. Sending SIGKILL."
-                        ),
-                        file=sys.stderr,
-                    )
-                    process.kill()
-                    process.wait()
-                return _WATCHDOG_EXIT_CODE
-
-            sleep_for = min(1.0, max(0.1, idle_timeout_s - idle_for))
-            time.sleep(sleep_for)
-    except KeyboardInterrupt:
-        # Kill the child so the reader thread reaches EOF; otherwise it holds
-        # the stdout buffer lock during interpreter shutdown (fatal error).
-        _terminate_process(process)
-        raise
-    finally:
-        reader_done.wait(timeout=2.0)
+    return _supervise(_popen_piped(cmd), idle_timeout_s)
 
 
 def _run_with_retries(

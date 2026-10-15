@@ -27,7 +27,3 @@ def launch_cmd(ctx: click.Context, args: tuple[str, ...]) -> None:
     rc = run(argv)
     if rc:
         raise click.exceptions.Exit(rc)
-
-
-def main() -> None:
-    launch_cmd()

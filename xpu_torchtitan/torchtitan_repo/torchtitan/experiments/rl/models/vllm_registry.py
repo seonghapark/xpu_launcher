@@ -42,6 +42,11 @@ VLLM_MODEL_NAME = "TorchTitanCausalLM"
 # torchtitan ConfigParser registered below.
 TORCHTITAN_CONFIG_FORMAT = "torchtitan"
 
+# Selects the experiment-owned runner that pads tokens for dense and expert SP.
+TORCHTITAN_WORKER_CLS = (
+    "torchtitan.experiments.rl.models.vllm_worker.TorchTitanGPUWorker"
+)
+
 
 @dataclass(kw_only=True, slots=True)
 class InferenceParallelismConfig:
@@ -68,15 +73,25 @@ class InferenceParallelismConfig:
     expert_parallel_degree: int = 1
     """Expert parallelism degree for MoE layers. 1 means disabled."""
 
-    spmd_backend: Literal["default", "spmd_types"] = "default"
+    enable_sequence_parallel: bool = False
+    """Enable dense sequence parallelism across the tensor-parallel axis."""
+
+    spmd_backend: Literal["partial_dtensor", "spmd_types"] = "spmd_types"
     """SPMD backend used by TorchTitan model parallelization in the generator."""
+
+    @property
+    def expert_sequence_parallel_size(self) -> int:
+        """TP-axis shard count used internally by expert-parallel MoE."""
+        if self.expert_parallel_degree <= 1:
+            return 1
+        return self.tensor_parallel_degree
 
     def to_training(self) -> ParallelismConfig:
         """Translate to the training ``ParallelismConfig`` for utils that need
         the full shape (``ParallelDims``, ``parallelize_fn``, world-size calc).
 
-        Pins the inference-only invariants: no DP replication, no CP/PP, no
-        sequence parallel, and loss parallel disabled.
+        Pins the inference-only invariants: no DP replication, no CP/PP, and
+        loss parallel disabled.
         """
         return ParallelismConfig(
             # Carry the vLLM DP factor on dp_shard (not dp_replicate) so the
@@ -91,7 +106,7 @@ class InferenceParallelismConfig:
             data_parallel_replicate_degree=1,
             context_parallel_degree=1,
             pipeline_parallel_degree=1,
-            enable_sequence_parallel=False,
+            enable_sequence_parallel=self.enable_sequence_parallel,
             spmd_backend=self.spmd_backend,
         )
 
@@ -167,12 +182,12 @@ def model_spec_to_hf_config_dict(spec: ModelSpec) -> dict[str, Any]:
 
     if moe is not None:
         # Presence required: >0 toggles MoE/EP branches.
-        hf["num_experts"] = moe.experts.num_experts
+        hf["num_experts"] = moe.routed_experts.inner_experts.num_experts
         # Unused: only per-model loaders (qwen3_moe, deepseek_v2, ...) and v1/metrics/perf.py (off) read these.
         hf[
             "num_experts_per_tok"
         ] = moe.router.top_k  # top_k is on the router, not experts
-        hf["moe_intermediate_size"] = moe.experts.hidden_dim
+        hf["moe_intermediate_size"] = moe.routed_experts.inner_experts.hidden_dim
         hf["decoder_sparse_step"] = 1
         hf.setdefault("norm_topk_prob", True)
 

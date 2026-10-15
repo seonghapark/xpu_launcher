@@ -31,7 +31,7 @@ from torchtitan.models.common.config_utils import get_attention_config
 from torchtitan.protocols.module import Module
 
 
-class EzpzScaledDotProductAttention(ScaledDotProductAttention):
+class PatchedScaledDotProductAttention(ScaledDotProductAttention):
     """SDPA that avoids ``set_priority=True`` in the ``sdpa_kernel`` context.
 
     Works around a torch._dynamo bug in PyTorch 2.11 where
@@ -77,7 +77,7 @@ class EzpzScaledDotProductAttention(ScaledDotProductAttention):
         return out.transpose(1, 2)
 
 
-class XPUScaledDotProductAttention(EzpzScaledDotProductAttention):
+class XPUScaledDotProductAttention(PatchedScaledDotProductAttention):
     """SDPA with OVERRIDEABLE backend for XPU-optimized fused attention.
 
     Adds OVERRIDEABLE to the backend priority list for the XPU fused
@@ -93,7 +93,7 @@ class XPUScaledDotProductAttention(EzpzScaledDotProductAttention):
     """
 
     @dataclass(kw_only=True, slots=True)
-    class Config(EzpzScaledDotProductAttention.Config):
+    class Config(PatchedScaledDotProductAttention.Config):
         pass
 
     sdpa_backends = [
@@ -187,7 +187,7 @@ from torchtitan.models.llama3.state_dict_adapter import Llama3StateDictAdapter
 from torchtitan.protocols.model_spec import ModelSpec
 
 __all__ = [
-    "EzpzScaledDotProductAttention",
+    "PatchedScaledDotProductAttention",
     "XPUScaledDotProductAttention",
     "_default_inner_attention",
     "model_registry",
@@ -233,10 +233,10 @@ def _default_inner_attention() -> ScaledDotProductAttention.Config:
     """Return the right SDPA config for the current device."""
     if hasattr(torch, "xpu") and torch.xpu.is_available():
         return XPUScaledDotProductAttention.Config()
-    return EzpzScaledDotProductAttention.Config()
+    return PatchedScaledDotProductAttention.Config()
 
 
-def _ezpz_get_attention_config(
+def _agpt_get_attention_config(
     backend: str,
 ) -> Module.Config:
     """XPU-aware attention config selection.
@@ -246,7 +246,7 @@ def _ezpz_get_attention_config(
     to upstream get_attention_config().
 
     Upstream PR #3571 (2026-06-09) removed SDPA + mask_type from the
-    language-model attention path entirely; ezpz keeps the "sdpa"
+    language-model attention path entirely; agpt keeps the "sdpa"
     branch alive because XPU lacks a working FlexAttention backend.
     Returns just the config now (upstream dropped the (config, mask_type)
     tuple too).
@@ -276,7 +276,7 @@ def _build_agpt_layers(
             logit_cap=logit_softcap,
         )
     else:
-        inner_attention = _ezpz_get_attention_config(attn_backend)
+        inner_attention = _agpt_get_attention_config(attn_backend)
     linear_init = _linear_init(dim)
     head_dim = dim // n_heads
     qk_norm_config = RMSNorm.Config(normalized_shape=head_dim, param_init=_NORM_INIT) if qk_norm else None
@@ -623,10 +623,38 @@ agpt_configs = {
         hidden_dim=28668,  # 28672 -> 28668 (multiple of 12)
     ),
     # YaRN-scaled flavors for context extension via continued pretraining.
-    # Per arxiv.org/abs/2309.00071, apply YaRN scaling to checkpoint trained
+    # Per arxiv.org/abs/2309.00071, apply YaRN scaling to a checkpoint trained
     # at original_seq_len (8192 for these models), then fine-tune briefly
-    # (~400 steps) at the extended max_seq_len (262144 = 2x extension target).
-    # Use rope_backend="cos_sin" to get mscale attention-temperature correction.
+    # (~400 steps) at the target length.
+    # These use the default complex RoPE. An earlier revision set
+    # rope_backend="cos_sin" here, with a comment claiming cos_sin was needed for
+    # the mscale attention-temperature correction; that was wrong. Both backends
+    # compute the same mscale (0.1*ln(factor) + 1.0) -- ComplexRoPE applies it in
+    # apply_rotary_emb, CosSinRoPE folds it into the cos/sin cache -- so backend
+    # choice has never gated mscale.
+    #
+    # The backends are not bit-identical under active YaRN, though. Their
+    # NTK-by-parts correction-range formulas are algebraically the same, but
+    # ComplexRoPE floors/ceils the endpoints to integers (matching the reference
+    # YaRN implementation) while CosSinRoPE keeps them as floats. That shifts the
+    # ramp within the transition band only: at rope_factor=32, 21 of 64 frequency
+    # dimensions differ, the other 43 are identical. So a checkpoint trained under
+    # cos_sin has learned against a slightly different ramp than this flavor now
+    # builds.
+    #
+    # Switching to complex also flips state_dict_adapter._needs_qk_permute() to
+    # True for these flavors, because it keys the HF<->Meta Q/K permutation off the
+    # RoPE class. DCP checkpoints must therefore be converted under the same RoPE
+    # class they were trained under; mixing the two loads cleanly and silently
+    # corrupts attention.
+    #
+    # max_seq_len/rope_factor below are the architectural CEILING (262144, a 32x
+    # extension), not the length any given run trains at. For a training run the
+    # length comes solely from training.seq_len: Decoder.Config.update_from_config
+    # lowers max_seq_len to it, and AgptModel.Config._sync_yarn_rope_factor
+    # recomputes rope_factor as seq_len/original_seq_len. The values here are what
+    # remain in force only for inference-only callers, which skip that sync
+    # because their generated length is not known ahead of time.
     "2B_yarn": _build_agpt_config(
         dim=2048,
         n_layers=12,
@@ -635,7 +663,6 @@ agpt_configs = {
         rope_theta=50000,
         vocab_size=256128,
         hidden_dim=11008,
-        rope_backend="cos_sin",
         scaling="yarn",
         max_seq_len=262144,
         original_seq_len=8192,
@@ -651,7 +678,6 @@ agpt_configs = {
         rope_theta=500000,
         vocab_size=256128,
         hidden_dim=compute_ffn_hidden_dim(5120, multiple_of=1024),
-        rope_backend="cos_sin",
         scaling="yarn",
         max_seq_len=262144,
         original_seq_len=8192,

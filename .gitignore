@@ -7,3 +7,14 @@ outputs/
 examples/
 run.log
 resource_metrics*/
+core.*
+*.o*
+job*
+tear*/
+*fix*/
+osexit*/
+*stall*/
+*smoke*/
+stall*
+verify*
+*valid*/

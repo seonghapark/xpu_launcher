@@ -33,6 +33,8 @@ Run each backend in a separate torchrun invocation:
 import gc
 import logging
 import os
+import shutil
+import tempfile
 import unittest
 
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
@@ -69,6 +71,7 @@ from torchtitan.experiments.rl.examples.alphabet_sort.config_registry import (
 from torchtitan.experiments.rl.models.vllm_registry import (
     register_to_vllm,
     TORCHTITAN_CONFIG_FORMAT,
+    TORCHTITAN_WORKER_CLS,
     VLLM_MODEL_NAME,
 )
 from torchtitan.models.common.attention import (
@@ -92,7 +95,7 @@ logger = logging.getLogger(__name__)
 # TODO: directly testing against PolicyTrainer with debug model to avoid OOM
 def build_trainer_model(
     config: Controller.Config,
-) -> tuple[torch.nn.Module, torch.device]:
+) -> tuple[torch.nn.Module, torch.device, dist_utils.SpmdContext]:
     """Build, parallelize, and load weights for the trainer model.
 
     Mirrors PolicyTrainer._build_model() without the Monarch actor framework.
@@ -100,12 +103,11 @@ def build_trainer_model(
     model_spec = config.model_spec
     hf_assets_path = config.hf_assets_path
 
-    device_type = utils.device_type
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    device = torch.device(f"{device_type}:{local_rank}")
+    device = utils.get_local_device()
     utils.device_module.set_device(device)
 
     parallelism = config.trainer.parallelism
+    dist_utils.set_spmd_backend(parallelism.spmd_backend)
     parallel_dims = ParallelDims(
         dp_shard=parallelism.data_parallel_shard_degree,
         dp_replicate=parallelism.data_parallel_replicate_degree,
@@ -114,6 +116,11 @@ def build_trainer_model(
         pp=parallelism.pipeline_parallel_degree,
         ep=parallelism.expert_parallel_degree,
         world_size=dist.get_world_size(),
+        spmd_backend=parallelism.spmd_backend,
+    )
+    train_context = dist_utils.get_spmd_context(
+        parallel_dims=parallel_dims,
+        spmd_typechecking=False,
     )
 
     dist_utils.set_determinism(
@@ -147,7 +154,7 @@ def build_trainer_model(
         ac_config=trainer_config.ac_config,
         dump_folder=trainer_config.dump_folder,
     )
-    model.to_empty(device=device_type)
+    model.to_empty(device=device)
     with torch.no_grad():
         model.init_weights(buffer_device=None)
 
@@ -168,7 +175,7 @@ def build_trainer_model(
             )
 
     model.eval()
-    return model, device
+    return model, device, train_context
 
 
 # TODO: directly testing against VLLMGenerator with debug model to avoid OOM
@@ -233,6 +240,7 @@ def build_inference_engine(config: Controller.Config) -> LLMEngine:
         tensor_parallel_size=gen_config.parallelism.tensor_parallel_degree,
         data_parallel_size=gen_config.parallelism.data_parallel_degree,
         enable_expert_parallel=enable_ep,
+        worker_cls=TORCHTITAN_WORKER_CLS,
         distributed_executor_backend="external_launcher",
         gpu_memory_utilization=gen_config.gpu_memory_limit,
         enforce_eager=not gen_config.cudagraph.enable,
@@ -251,17 +259,18 @@ def build_inference_engine(config: Controller.Config) -> LLMEngine:
     # (the active-buffer capacity num_group_workers, or the validation pass).
     async_loop = config.async_loop
     gen_dp = max(gen_config.parallelism.data_parallel_degree, 1)
-    num_group_workers = (
-        async_loop.max_offpolicy_steps + 1
-    ) * async_loop.num_groups_per_train_step
+    num_group_workers = async_loop.max_active_rollout_groups
     rollout_concurrency = max(
-        num_group_workers * async_loop.group_size,
+        num_group_workers * async_loop.num_samples_per_prompt,
         async_loop.validation.num_samples,
     )
     max_num_seqs = min((rollout_concurrency + gen_dp - 1) // gen_dp, 512)
     engine_kwargs["max_num_seqs"] = max_num_seqs
+    expert_sequence_parallel_size = gen_config.parallelism.expert_sequence_parallel_size
     vllm_compilation_config = gen_config.cudagraph.get_vllm_compilation_config(
         max_num_seqs=max_num_seqs,
+        expert_sequence_parallel_size=expert_sequence_parallel_size,
+        enable_sequence_parallel=gen_config.parallelism.enable_sequence_parallel,
     )
     if vllm_compilation_config is not None:
         engine_kwargs["compilation_config"] = vllm_compilation_config
@@ -589,6 +598,10 @@ class BitwiseParityTestBase(unittest.TestCase):
     attn_backend: str = "varlen"
     min_world_size: int = 1
     hf_assets_env_var: str = "HF_ASSETS_PATH"
+    # Root dir for run artifacts (NCCL flight-recorder comm_traces). CI sets it
+    # to $RUNNER_TEMP/artifacts-to-be-uploaded so traces are uploaded; when unset
+    # (local runs) a temp dir is used instead.
+    dump_folder_env_var: str = "RL_TEST_DUMP_FOLDER"
     # When True, vLLM skips its own checkpoint load and the trainer model's
     # weights (including attention sinks) are copied into the engine in-process.
     sync_weights_from_trainer: bool = False
@@ -630,7 +643,15 @@ class BitwiseParityTestBase(unittest.TestCase):
         set_batch_invariance(config.trainer.debug.batch_invariant)
 
         if not dist.is_initialized():
-            dist_utils.init_distributed(CommConfig())
+            # Writable base_folder for comm_traces
+            dump_root = os.environ.get(cls.dump_folder_env_var)
+            if dump_root:
+                base_folder = os.path.join(dump_root, cls.__name__)
+                os.makedirs(base_folder, exist_ok=True)
+            else:
+                base_folder = tempfile.mkdtemp(prefix="rl_bitwise_")
+                cls.addClassCleanup(shutil.rmtree, base_folder, ignore_errors=True)
+            dist_utils.init_distributed(CommConfig(), base_folder=base_folder)
 
         if cls.sync_weights_from_trainer:
             generator_checkpoint = CheckpointManager.Config(enable=False)
@@ -653,7 +674,7 @@ class BitwiseParityTestBase(unittest.TestCase):
         # GPU memory for vLLM to leave room for the trainer model.
         config.generator.gpu_memory_limit = 0.5
 
-        cls.model, cls.device = build_trainer_model(config)
+        cls.model, cls.device, cls.train_context = build_trainer_model(config)
         cls.engine = build_inference_engine(config)
         if cls.sync_weights_from_trainer:
             _sync_trainer_weights_to_vllm(cls.model, cls.engine)
@@ -665,8 +686,16 @@ class BitwiseParityTestBase(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        # Each class runs in its own torchrun process. Synchronize before
+        # releasing local resources, then leave process-group cleanup to exit.
+        # vLLM's internal shutdown destroys every registered process group,
+        # including the trainer's groups, and deadlocks during global teardown.
+        if dist.is_initialized():
+            dist.barrier()
         if hasattr(cls, "engine"):
-            cls.engine.engine_core.shutdown()
+            renderer = getattr(cls.engine, "renderer", None)
+            if renderer is not None:
+                renderer.shutdown()
             del cls.engine
         if hasattr(cls, "model"):
             del cls.model
@@ -711,7 +740,7 @@ class BitwiseParityTestBase(unittest.TestCase):
         n = len(self.prompt_ids)
         mid = max(1, n // 2)
 
-        with torch.no_grad():
+        with type(self).train_context(), torch.no_grad():
             lps_partial = compute_trainer_prefill_logprobs(
                 model,
                 self.prompt_ids[:mid],
@@ -745,7 +774,7 @@ class BitwiseParityTestBase(unittest.TestCase):
         model = self.model
         engine = self.engine
 
-        with torch.no_grad():
+        with type(self).train_context(), torch.no_grad():
             trainer_lps = compute_trainer_prefill_logprobs(
                 model, self.prompt_ids, self.device, attn_backend=self.attn_backend
             )
