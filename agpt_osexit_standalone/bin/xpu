@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+export PYTHONPATH="$root/src:$root/xpu_torchtitan/torchtitan_repo${PYTHONPATH:+:$PYTHONPATH}"
+exec "${VIRTUAL_ENV:-/lus/flare/projects/datascience/seonghapark/venv}/bin/python" -m cli "$@"
